@@ -1,0 +1,223 @@
+C51 COMPILER V7.20   P2P_DEMO_RX_CALLBACKS                                                 04/10/2014 16:46:46 PAGE 1   
+
+
+C51 COMPILER V7.20, COMPILATION OF MODULE P2P_DEMO_RX_CALLBACKS
+OBJECT MODULE PLACED IN p2p_demo_rx_callbacks.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\c51.exe p2p_demo_rx_callbacks.c DB OE BR DF(SI1000MB_SI1000,FREQUENCY_BAND_434,TRAN
+                    -SCEIVER_OPERATION,FOUR_CHANNEL_IS_USED,EXTENDED_PACKET_FORMAT,TRACE_ENABLED) INCDIR(..\..\bsp;..\..\stack;c:\SiLabs\MCU_
+                    -3\Inc)
+
+line level    source
+
+   1          /*!\file EZMacPro_Callbacks.c
+   2           * \brief EZMacPRO callback functions.
+   3           *
+   4           * \n EZMacPRO version: 3.0.1r
+   5           *
+   6           * \n This software must be used in accordance with the End User License
+   7           * \n Agreement.
+   8           *
+   9           * \b COPYRIGHT
+  10           * \n Copyright 2012 Silicon Laboratories, Inc.
+  11           * \n http://www.silabs.com
+  12           */
+  13          
+  14          
+  15                          /* ======================================= *
+  16                           *              I N C L U D E              *
+  17                           * ======================================= */
+  18          
+  19          #include "..\..\common.h"
+  20          #include "..\..\p2p_demo\rx_node\p2p_demo_rx_node.h"
+*** WARNING C245 IN LINE 82 OF ..\..\P2P_DEMO\RX_NODE\P2P_DEMO_RX_NODE.H: unknown #pragma, line ignored
+*** WARNING C245 IN LINE 88 OF ..\..\P2P_DEMO\RX_NODE\P2P_DEMO_RX_NODE.H: unknown #pragma, line ignored
+  21          
+  22          
+  23                          /* ======================================= *
+  24                           *     G L O B A L   V A R I A B L E S     *
+  25                           * ======================================= */
+  26          
+  27          BIT fEZMacPRO_StateWakeUpEntered = 0;
+  28          BIT fEZMacPRO_StateSleepEntered = 0;
+  29          BIT fEZMacPRO_StateIdleEntered = 0;
+  30          BIT fEZMacPRO_StateRxEntered = 0;
+  31          BIT fEZMacPRO_StateTxEntered = 0;
+  32          BIT fEZMacPRO_StateErrorEntered = 0;
+  33          
+  34          BIT fEZMacPRO_LFTimerExpired = 0;
+  35          BIT fEZMacPRO_LowBattery = 0;
+  36          BIT fEZMacPRO_SyncWordReceived = 0;
+  37          BIT fEZMacPRO_CRCError = 0;
+  38          BIT fEZMacPRO_PacketDiscarded = 0;
+  39          BIT fEZMacPRO_PacketReceived = 0;
+  40          BIT fEZMacPRO_PacketForwarding = 0;
+  41          BIT fEZMacPRO_PacketSent = 0;
+  42          BIT fEZMacPRO_LBTTimeout = 0;
+  43          BIT fEZMacPRO_AckTimeout = 0;
+  44          BIT fEZMacPRO_AckSending = 0;
+  45          
+  46          
+  47                          /* ======================================= *
+  48                           *   C A L L B A C K   F U N C T I O N S   *
+  49                           * ======================================= */
+  50          
+  51          /*!
+C51 COMPILER V7.20   P2P_DEMO_RX_CALLBACKS                                                 04/10/2014 16:46:46 PAGE 2   
+
+  52           * The callback function is called when the stack enters Wake-up state.
+  53           */
+  54          void EZMacPRO_StateWakeUpEntered(void)
+  55          {
+  56   1          fEZMacPRO_StateWakeUpEntered = 1;
+  57   1      }
+  58          
+  59          /*!
+  60           * The callback function is called when the stack enters Sleep state.
+  61           */
+  62          void EZMacPRO_StateSleepEntered(void)
+  63          {
+  64   1          fEZMacPRO_StateSleepEntered = 1;
+  65   1      }
+  66          
+  67          /*!
+  68           * The callback function is called when the stack enters Idle state.
+  69           */
+  70          void EZMacPRO_StateIdleEntered(void)
+  71          {
+  72   1          fEZMacPRO_StateIdleEntered = 1;
+  73   1      }
+  74          
+  75          /*!
+  76           * The callback function is called when the stack enters Receive state.
+  77           */
+  78          void EZMacPRO_StateRxEntered(void)
+  79          {
+  80   1          fEZMacPRO_StateRxEntered = 1;
+  81   1      }
+  82          
+  83          /*!
+  84           * The callback function is called when the stack enters Transmit state.
+  85           */
+  86          void EZMacPRO_StateTxEntered(void)
+  87          {
+  88   1          fEZMacPRO_StateTxEntered = 1;
+  89   1      }
+  90          
+  91          /*!
+  92           * The callback function is called when the stack enters Error state.
+  93           */
+  94          void EZMacPRO_StateErrorEntered(void)
+  95          {
+  96   1          fEZMacPRO_StateErrorEntered = 1;
+  97   1      }
+  98          
+  99          
+ 100          void EZMacPRO_LFTimerExpired(void)
+ 101          {
+ 102   1          fEZMacPRO_LFTimerExpired = 1;
+ 103   1      }
+ 104          
+ 105          
+ 106          void EZMacPRO_LowBattery(void)
+ 107          {
+ 108   1          fEZMacPRO_LowBattery = 1;
+ 109   1      }
+ 110          
+ 111          
+ 112          #ifndef TRANSMITTER_ONLY_OPERATION
+ 113          void EZMacPRO_SyncWordReceived(void)
+C51 COMPILER V7.20   P2P_DEMO_RX_CALLBACKS                                                 04/10/2014 16:46:46 PAGE 3   
+
+ 114          {
+ 115   1          fEZMacPRO_SyncWordReceived = 1;
+ 116   1      }
+ 117          #endif //TRANSMITTER_ONLY_OPERATION not defined
+ 118          
+ 119          
+ 120          #ifndef TRANSMITTER_ONLY_OPERATION
+ 121          void EZMacPRO_PacketDiscarded(void)
+ 122          {
+ 123   1          fEZMacPRO_PacketDiscarded = 1;
+ 124   1      }
+ 125          #endif //TRANSMITTER_ONLY_OPERATION not defined
+ 126          
+ 127          
+ 128          #ifndef TRANSMITTER_ONLY_OPERATION
+ 129          void EZMacPRO_PacketReceived(U8 rssi)
+ 130          {
+ 131   1          rssiVal = rssi; // touch rssi to eliminate warning
+ 132   1          fEZMacPRO_PacketReceived = 1;
+ 133   1      }
+ 134          #endif //TRANSMITTER_ONLY_OPERATION not defined
+ 135          
+ 136          
+ 137          #ifdef PACKET_FORWARDING_SUPPORTED
+              void EZMacPRO_PacketForwarding(void)
+              {
+                  fEZMacPRO_PacketForwarding = 1;
+              }
+              #endif //PACKET_FORWARDING_SUPPORTED
+ 143          
+ 144          
+ 145          #ifndef RECEIVER_ONLY_OPERATION
+ 146          void EZMacPRO_PacketSent(void)
+ 147          {
+ 148   1          fEZMacPRO_PacketSent = 1;
+ 149   1      }
+ 150          #endif //RECEIVER_ONLY_OPERATION not defined
+ 151          
+ 152          
+ 153          #ifdef TRANSCEIVER_OPERATION
+ 154          void EZMacPRO_LBTTimeout (void)
+ 155          {
+ 156   1          fEZMacPRO_LBTTimeout = 1;
+ 157   1      }
+ 158          #endif //TRANSCEIVER_OPERATION
+ 159          
+ 160          
+ 161          #ifdef EXTENDED_PACKET_FORMAT
+ 162          #ifdef TRANSCEIVER_OPERATION
+ 163          void EZMacPRO_AckTimeout (void)
+ 164          {
+ 165   1          fEZMacPRO_AckTimeout = 1;
+ 166   1      }
+ 167          #endif //TRANSCEIVER_OPERATION
+ 168          #endif //EXTENDED_PACKET_FORMAT
+ 169          
+ 170          
+ 171          void EZMacPRO_CRCError(void)
+ 172          {
+ 173   1          fEZMacPRO_CRCError = 1;
+ 174   1      }
+ 175          
+C51 COMPILER V7.20   P2P_DEMO_RX_CALLBACKS                                                 04/10/2014 16:46:46 PAGE 4   
+
+ 176          
+ 177          #ifdef EXTENDED_PACKET_FORMAT
+ 178          #ifdef TRANSCEIVER_OPERATION
+ 179          void EZMacPRO_AckSending(void)
+ 180          {
+ 181   1          U8 BUFFER_MSPACE i;
+ 182   1      
+ 183   1          fEZMacPRO_AckSending = 1;
+ 184   1          //example: RSSI is sent back in Ack payload
+ 185   1          i = EZMacProRSSIvalue;
+ 186   1          EZMacPRO_Ack_Write(1,&i);
+ 187   1      }
+ 188          #endif //TRANSCEIVER_OPERATION
+ 189          #endif //EXTENDED_PACKET_FORMAT
+ 190          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     67    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----       1
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =     17    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  2 WARNING(S),  0 ERROR(S)

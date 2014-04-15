@@ -1,0 +1,336 @@
+C51 COMPILER V7.20   P2P_DEMO_RX_NODE                                                      04/10/2014 16:46:46 PAGE 1   
+
+
+C51 COMPILER V7.20, COMPILATION OF MODULE P2P_DEMO_RX_NODE
+OBJECT MODULE PLACED IN p2p_demo_rx_node.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\c51.exe p2p_demo_rx_node.c DB OE BR DF(SI1000MB_SI1000,FREQUENCY_BAND_434,TRANSCEIV
+                    -ER_OPERATION,FOUR_CHANNEL_IS_USED,EXTENDED_PACKET_FORMAT,TRACE_ENABLED) INCDIR(..\..\bsp;..\..\stack;c:\SiLabs\MCU_3\Inc
+                    -)
+
+line level    source
+
+   1          /*!\file p2p_demo_rx_node.c
+   2           * \brief P2P demo code on top of the EZMacPRO stack.
+   3           *
+   4           * \n P2P demo Receiver node code description:
+   5           * \n After power on reset the Receiver node goes into Receive state to wait for
+   6           * \n the first packet. Once that packet is received the Low-Frequency Timer is
+   7           * \n started and the radio is placed into Sleep state. The timer is configured
+   8           * \n to wake the radio up for reception just before the next packet is
+   9           * \n transmitted by the Transmitter node(one per second). Once the packet is
+  10           * \n successfully received its content (packet number) is written on the LCD
+  11           * \n and the radio is placed back into Sleep again. The Low Duty Cycle mode
+  12           * \n allows the radio to stay in low-power state for most of the time and save
+  13           * \n energy.
+  14           * \n LED1 toggles when a packet is received.
+  15           *
+  16           *
+  17           * \n This software must be used in accordance with the End User License
+  18           * \n Agreement.
+  19           *
+  20           * \b COPYRIGHT
+  21           * \n Copyright 2012 Silicon Laboratories, Inc.
+  22           * \n http://www.silabs.com
+  23           */
+  24          
+  25                          /* ======================================= *
+  26                           *              I N C L U D E              *
+  27                           * ======================================= */
+  28          
+  29          #include "..\..\common.h"
+  30          #include "p2p_demo_rx_node.h"
+*** WARNING C245 IN LINE 82 OF P2P_DEMO_RX_NODE.H: unknown #pragma, line ignored
+*** WARNING C245 IN LINE 88 OF P2P_DEMO_RX_NODE.H: unknown #pragma, line ignored
+  31          #include "p2p_demo_rx_menu.h"
+  32          
+  33          
+  34                          /* ======================================= *
+  35                           *     G L O B A L   V A R I A B L E S     *
+  36                           * ======================================= */
+  37          
+  38          SEGMENT_VARIABLE(abRfPayload[64], U8, BUFFER_MSPACE);
+  39          SEGMENT_VARIABLE(bPacketLength, U8, APPLICATION_MSPACE);
+  40          SEGMENT_VARIABLE(wPacketCounter, U8, APPLICATION_MSPACE);
+  41          SEGMENT_VARIABLE(rssiVal, U8, APPLICATION_MSPACE);
+  42          SEGMENT_VARIABLE(DEMO_SR, U8, APPLICATION_MSPACE);
+  43          SEGMENT_VARIABLE(printCount, U16, APPLICATION_MSPACE);
+  44          
+  45          #ifdef TRACE_ENABLED
+  46            SEGMENT_VARIABLE(printBuf[40], U8, APPLICATION_MSPACE);
+  47          #endif //TRACE_ENABLED
+  48          
+  49          
+  50                          /* ======================================= *
+  51                           *      L O C A L   F U N C T I O N S      *
+C51 COMPILER V7.20   P2P_DEMO_RX_NODE                                                      04/10/2014 16:46:46 PAGE 2   
+
+  52                           * ======================================= */
+  53          
+  54          /*!
+  55           * Entry point to the state machine.
+  56           */
+  57          void StateMachine_Init(void)
+  58          {
+  59   1          /* Disable Watchdog. */
+  60   1          DISABLE_WATCHDOG();
+  61   1          /* Init Demo State Machine. */
+  62   1          DEMO_SR = DEMO_BOOT;
+  63   1      }
+  64          
+  65          
+  66          /*!
+  67           * This is the State Machine of the Demo Application.
+  68           */
+  69          void StateMachine(void)
+  70          {
+  71   1          U16 wWaitCnt;
+  72   1      
+  73   1          switch (DEMO_SR)
+  74   1          {
+  75   2              case DEMO_BOOT:
+  76   2                      printCount = 0;
+  77   2                  /* Initialise board. */
+  78   2                  BoardInit();
+  79   2                  /* Enable global interrupts. */
+  80   2                  ENABLE_GLOBAL_INTERRUPTS();
+  81   2                  /* Initialise EZMacPRO. */
+  82   2                  EZMacPRO_Init();
+  83   2                  /* Wait until device goes to Sleep. */
+  84   2                  while (!fEZMacPRO_StateSleepEntered);
+  85   2                  /* Clear State transition flags. */
+  86   2                  fEZMacPRO_StateWakeUpEntered = 0;
+  87   2                  fEZMacPRO_StateSleepEntered = 0;
+  88   2                  /* Point to point demo initialisation. */
+  89   2                  vP2P_demo_RxInit();
+  90   2                  /* Go to wait for first packet. */
+  91   2                  // DEMO_SR = DEMO_RX_FIRST;
+  92   2                  DEMO_SR = DEMO_RX_NOSLEEP;
+  93   2                  break;
+  94   2      
+  95   2              case DEMO_RX_FIRST:
+  96   2                  /* First packet received. */
+  97   2                  if(fEZMacPRO_PacketReceived)
+  98   2                  {   /* Clear flag. */
+  99   3                      fEZMacPRO_PacketReceived = 0;
+ 100   3                      /* Get packet then place the radio to sleep. */
+ 101   3                      vP2P_demo_GetPacketGoToSleep();
+ 102   3                      /* Go to Sleep state. */
+ 103   3                      DEMO_SR = DEMO_SLEEP;
+ 104   3                  }
+ 105   2                  break;
+ 106   2      
+ 107   2              case DEMO_SLEEP:
+ 108   2                  /* LFT expired, start waiting for packet. */
+ 109   2                  if (fEZMacPRO_LFTimerExpired)
+ 110   2                  {   /* Clear flag. */
+ 111   3                      fEZMacPRO_LFTimerExpired = 0;
+ 112   3                      /* Disable LFT, use the Internal Time Base. */
+ 113   3                      EZMacPRO_Reg_Write(LFTMR2, 0x44);
+C51 COMPILER V7.20   P2P_DEMO_RX_NODE                                                      04/10/2014 16:46:46 PAGE 3   
+
+ 114   3                      /* Wake up from Sleep mode. */
+ 115   3                      EZMacPRO_Wake_Up();
+ 116   3                      /* Wait until device goes to Idle. */
+ 117   3                      while (!fEZMacPRO_StateIdleEntered);
+ 118   3                      /* Clear State transition flags. */
+ 119   3                      fEZMacPRO_StateWakeUpEntered = 0;
+ 120   3                      fEZMacPRO_StateIdleEntered = 0;
+ 121   3                      /* Start receiving. */
+ 122   3                      EZMacPRO_Receive();
+ 123   3                    #ifdef SDBC
+                              /* Display Receive on LCD. */
+                              vPerformMenu(sMenu_PacketReceive);
+                            #endif //SDBC
+ 127   3                    #ifdef TRACE_ENABLED
+ 128   3                      printf("[RX_NODE][DEMO_SLEEP] Woke up.\n");
+ 129   3                    #endif //TRACE_ENABLED
+ 130   3                      /* Wait until radio is placed to RX. */
+ 131   3                      while (!fEZMacPRO_StateRxEntered);
+ 132   3                      /* Clear State transition flag. */
+ 133   3                      fEZMacPRO_StateRxEntered = 0;
+ 134   3                      /* Go to Receive state. */
+ 135   3                      DEMO_SR = DEMO_RX;
+ 136   3                  }
+ 137   2                  break;
+ 138   2      
+ 139   2              case DEMO_RX:
+ 140   2                  /* Wait in Receive state until packet arrives. */
+ 141   2                  if(fEZMacPRO_PacketReceived)
+ 142   2                  {   /* Clear flag. */
+ 143   3                      fEZMacPRO_PacketReceived = 0;
+ 144   3                      /* Get packet then place the radio to sleep. */
+ 145   3                      vP2P_demo_GetPacketGoToSleep();
+ 146   3                      LED1 = !LED1;
+ 147   3                      for (wWaitCnt = 0; wWaitCnt < 25000; wWaitCnt++);
+ 148   3                      /* Go to back to Sleep state. */
+ 149   3                      DEMO_SR = DEMO_SLEEP;
+ 150   3                  }
+ 151   2                  break;
+ 152   2                  
+ 153   2              case DEMO_RX_NOSLEEP:
+ 154   2                  if(fEZMacPRO_PacketReceived)
+ 155   2                  {   /* Clear flag. */
+ 156   3                      fEZMacPRO_PacketReceived = 0;
+ 157   3                      /* Get packet then place the radio to sleep. */
+ 158   3                              vP2P_demo_GetPacketNoSleep();
+ 159   3                          LED1 = !LED1;
+ 160   3                      // for (wWaitCnt = 0; wWaitCnt < 10; wWaitCnt++);
+ 161   3                  }
+ 162   2                      break;
+ 163   2      
+ 164   2              default:
+ 165   2                  break;
+ 166   2          }
+ 167   1      }
+ 168          
+ 169          
+ 170          
+ 171          void vP2P_demo_RxInit(void)
+ 172          {
+ 173   1          /* Configure and start 2sec timeout for Silabs splash screen. */
+ 174   1          EZMacPRO_Reg_Write(LFTMR0, LFTMR0_TIMEOUT_SEC(STARTUP_TIMEOUT));
+ 175   1          EZMacPRO_Reg_Write(LFTMR1, LFTMR1_TIMEOUT_SEC(STARTUP_TIMEOUT));
+C51 COMPILER V7.20   P2P_DEMO_RX_NODE                                                      04/10/2014 16:46:46 PAGE 4   
+
+ 176   1          EZMacPRO_Reg_Write(LFTMR2, 0x80 | LFTMR2_TIMEOUT_SEC(STARTUP_TIMEOUT));
+ 177   1        #ifdef SDBC
+                  /* Show Silabs logo, demo name & version. */
+                  vPerformMenu(sMenu_StartupScreen);
+                #endif //SDBC
+ 181   1          /* Wait here until LFT expires. */
+ 182   1          while(!fEZMacPRO_LFTimerExpired);
+ 183   1          /* Clear flag. */
+ 184   1          fEZMacPRO_LFTimerExpired = 0;
+ 185   1          /* Disable LFT. */
+ 186   1          EZMacPRO_Reg_Write(LFTMR2, ~0x80 & LFTMR2_TIMEOUT_SEC(STARTUP_TIMEOUT));
+ 187   1          /* Init counter. */
+ 188   1          wPacketCounter = 0;
+ 189   1          /* Init packet content. */
+ 190   1          // memcpy(&abRfPayload[0], "      ", 6);
+ 191   1          memset(&abRfPayload[0], 0x00 , 64);
+ 192   1        #ifdef SDBC
+                  /* Show TX screen on LCD. */
+                  vPerformMenu(sMenu_RxScreen);
+                #endif //SDBC
+ 196   1          EZMacPRO_Reg_Write(MCR, 0xAC);              // Set data rate to 9.6kbps, DNPL = 1, rad = 1, used 1 cha
+             -nnel
+ 197   1          EZMacPRO_Reg_Write(SECR, 0x20);             // State after receive is RX state and state after transmi
+             -t is Idle state
+ 198   1          EZMacPRO_Reg_Write(TCR, 0xB0);              // LBT Before Talk disabled, Output power: +20 dBm, ACK en
+             -able , AFC disable
+ 199   1          EZMacPRO_Reg_Write(RCR, 0x00);              // Search disable
+ 200   1          EZMacPRO_Reg_Write(PFCR, 0xA0);             // Destination address and the custumer filters are enable
+             -d
+ 201   1          EZMacPRO_Reg_Write(FR0, 1);                 // set the used frequency channel
+ 202   1          EZMacPRO_Reg_Write(SCID, CUSTOMER_ID);      // set the customer ID to 0x01
+ 203   1          EZMacPRO_Reg_Write(SFID, DEVICE_SELF_ID);   // set the self ID
+ 204   1          LED1 = ILLUMINATE;
+ 205   1      
+ 206   1          /* Wake up from Sleep mode. */
+ 207   1          EZMacPRO_Wake_Up();
+ 208   1          /* Wait until device goes to Idle. */
+ 209   1          while (!fEZMacPRO_StateIdleEntered);
+ 210   1          /* Clear State transition flags. */
+ 211   1          fEZMacPRO_StateWakeUpEntered = 0;
+ 212   1          fEZMacPRO_StateIdleEntered = 0;
+ 213   1          /* Go to receive state. */
+ 214   1          EZMacPRO_Receive();
+ 215   1        #ifdef SDBC
+                  /* Display RX screen on LCD. */
+                  vPerformMenu(sMenu_PacketReceive);
+                #endif //SDBC
+ 219   1        #ifdef TRACE_ENABLED
+ 220   1          printf("[RX_NODE][DEMO_BOOT] Startup done.\n");
+ 221   1          printf("[RX_NODE][DEMO_BOOT] Waiting for first packet...\n");
+ 222   1        #endif //TRACE_ENABLED
+ 223   1          /* Wait until radio is placed to RX. */
+ 224   1          while (!fEZMacPRO_StateRxEntered);
+ 225   1          /* Clear State transition flag. */
+ 226   1          fEZMacPRO_StateRxEntered = 0;
+ 227   1      }
+ 228          
+ 229          
+ 230          void vP2P_demo_GetPacketGoToSleep(void)
+ 231          {
+ 232   1          /* Go to Idle state and read RX buffer. */
+ 233   1              EZMacPRO_Idle();
+C51 COMPILER V7.20   P2P_DEMO_RX_NODE                                                      04/10/2014 16:46:46 PAGE 5   
+
+ 234   1          /* Wait until device goes to Idle. */
+ 235   1          while (!fEZMacPRO_StateIdleEntered);
+ 236   1          /* Clear State transition flag. */
+ 237   1          fEZMacPRO_StateIdleEntered = 0;
+ 238   1          /* Read out the payload. */
+ 239   1          EZMacPRO_RxBuf_Read(&bPacketLength, &abRfPayload[0]);
+ 240   1          /* Get the data. */
+ 241   1          wPacketCounter = atoi(abRfPayload);
+ 242   1          /* Go to Sleep state. */
+ 243   1          EZMacPRO_Sleep();
+ 244   1        #ifdef SDBC
+                  /* Update number of received packets on LCD. */
+                  vPerformMenu(sMenu_RxRefreshCounter);
+                #endif //SDBC
+ 248   1        #ifdef TRACE_ENABLED
+ 249   1          // printf("[RX_NODE][DEMO_RX] Received packet[rssi:%03bu]. Content:%5u\n", rssiVal, wPacketCounter);
+ 250   1          printf("[RX_NODE][DEMO_RX] Received packet[rssi:%03bu]. Content:%5u\n", rssiVal, printCount++);
+ 251   1        #endif //TRACE_ENABLED
+ 252   1        #ifdef SDBC
+                  /* Display Sleep on LCD. */
+                  vPerformMenu(sMenu_SleepMode);
+                #endif //SDBC
+ 256   1        #ifdef TRACE_ENABLED
+ 257   1          printf("[RX_NODE][DEMO_RX] Went to sleep.\n");
+ 258   1        #endif //TRACE_ENABLED
+ 259   1          /* Wait until device goes back to Sleep. */
+ 260   1          while (!fEZMacPRO_StateSleepEntered);
+ 261   1          /* Clear State transition flag. */
+ 262   1          fEZMacPRO_StateSleepEntered = 0;
+ 263   1          /* Set the Low Frequency Timer interval and start it. */
+ 264   1           EZMacPRO_Reg_Write(LFTMR0, 0xC0);       // set the interval to 875ms
+ 265   1           EZMacPRO_Reg_Write(LFTMR1, 0x01);       // set the interval to 875ms
+ 266   1          EZMacPRO_Reg_Write(LFTMR0, 0x20);       // set the interval to 875ms
+ 267   1          EZMacPRO_Reg_Write(LFTMR1, 0x00);       // set the interval to 875ms
+ 268   1          EZMacPRO_Reg_Write(LFTMR2, 0xC4);       // enable the LFT, use the Internal Time Base
+ 269   1      }
+ 270          
+ 271          void vP2P_demo_GetPacketNoSleep(void)
+ 272          {
+ 273   1              int i = 0;
+ 274   1              // EZMacProPayloadStruct * PayloadStruct = abRfPayload;
+ 275   1              EZMacProPayload_SensorNode * PayloadStruct = abRfPayload;
+ 276   1          /* Read out the payload. */
+ 277   1          EZMacPRO_RxBuf_Read(&bPacketLength, &abRfPayload[0]);
+ 278   1          /* Get the data. */
+ 279   1          //wPacketCounter = atoi(abRfPayload);
+ 280   1          // wPacketCounter = PayloadStruct->sensor_sequence;
+ 281   1        #ifdef TRACE_ENABLED
+ 282   1          // printf("[RX_NODE][DEMO_RX] Received packet[rssi:%03bu]. Content:%5u\n", rssiVal, printCount++);
+ 283   1          // printf("[RX_NODE]Received packet [ID:%02X] [rssi:%03bu] [Content:%u]\n", (U16)(PayloadStruct->senso
+             -r_ID[0]), rssiVal, (U8)(PayloadStruct->sensor_sequence));
+ 284   1      
+ 285   1              for(i = 0; i<bPacketLength ; i++)
+ 286   1              printf("%02X ", (U16)(abRfPayload[i]));
+ 287   1          printf("\n\r");
+ 288   1          
+ 289   1        #endif //TRACE_ENABLED
+ 290   1        #ifdef TRACE_ENABLED
+ 291   1          // printf("[RX_NODE][DEMO_RX] Went to sleep.\n");
+ 292   1        #endif //TRACE_ENABLED
+ 293   1      }
+ 294          
+C51 COMPILER V7.20   P2P_DEMO_RX_NODE                                                      04/10/2014 16:46:46 PAGE 6   
+
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    522    ----
+   CONSTANT SIZE    =    223    ----
+   XDATA SIZE       =    110    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----       5
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  2 WARNING(S),  0 ERROR(S)

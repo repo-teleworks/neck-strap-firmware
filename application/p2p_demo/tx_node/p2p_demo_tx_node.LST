@@ -1,0 +1,383 @@
+C51 COMPILER V7.20   P2P_DEMO_TX_NODE                                                      04/10/2014 16:48:40 PAGE 1   
+
+
+C51 COMPILER V7.20, COMPILATION OF MODULE P2P_DEMO_TX_NODE
+OBJECT MODULE PLACED IN p2p_demo_tx_node.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\c51.exe p2p_demo_tx_node.c DB OE BR DF(SI1000MB_SI1000,FREQUENCY_BAND_434,TRANSCEIV
+                    -ER_OPERATION,FOUR_CHANNEL_IS_USED,EXTENDED_PACKET_FORMAT,TRACE_ENABLED) INCDIR(..\..\bsp;..\..\stack;c:\SiLabs\MCU_3\Inc
+                    -)
+
+line level    source
+
+   1          /*!\file p2p_demo_tx_node.c
+   2           * \brief P2P demo code on top of the EZMacPRO stack.
+   3           *
+   4           * \n P2P demo Transmitter node code description:
+   5           * \n After power on reset the Transmitter node goes into Sleep state to wait
+   6           * \n for the 1 second Low-Frequency Timer timeout. When the timer expires a
+   7           * \n packet is transmitted with an ascending number in its payload. The content
+   8           * \n of the last packet is always updated on the LCD before the radio is placed
+   9           * \n into Sleep.
+  10           * \n LED1 toggles when a packet transmission is acknowledged by the Receiver.
+  11           *
+  12           *
+  13           * \n This software must be used in accordance with the End User License
+  14           * \n Agreement.
+  15           *
+  16           * \b COPYRIGHT
+  17           * \n Copyright 2012 Silicon Laboratories, Inc.
+  18           * \n http://www.silabs.com
+  19           */
+  20          
+  21                          /* ======================================= *
+  22                           *              I N C L U D E              *
+  23                           * ======================================= */
+  24          #include "..\..\common.h"
+  25          #include "p2p_demo_tx_node.h"
+*** WARNING C245 IN LINE 81 OF P2P_DEMO_TX_NODE.H: unknown #pragma, line ignored
+*** WARNING C245 IN LINE 101 OF P2P_DEMO_TX_NODE.H: unknown #pragma, line ignored
+  26          #include "p2p_demo_tx_menu.h"
+  27          
+  28          
+  29                          /* ======================================= *
+  30                           *     G L O B A L   V A R I A B L E S     *
+  31                           * ======================================= */
+  32          
+  33          SEGMENT_VARIABLE(abRfPayload[64], U8, BUFFER_MSPACE);
+  34          SEGMENT_VARIABLE(bPacketLength, U8, APPLICATION_MSPACE);
+  35          SEGMENT_VARIABLE(wPacketCounter, U8, APPLICATION_MSPACE);
+  36          SEGMENT_VARIABLE(DEMO_SR, U8, APPLICATION_MSPACE);
+  37          SEGMENT_VARIABLE(STATE_MAG_SW, U8, APPLICATION_MSPACE);
+  38          SEGMENT_VARIABLE(STATE_SOS_SW, U8, APPLICATION_MSPACE);
+  39          SEGMENT_VARIABLE(STATE_CHANGE_SOS, U8, APPLICATION_MSPACE);
+  40          
+  41          
+  42          #ifdef TRACE_ENABLED
+  43            SEGMENT_VARIABLE(printBuf[40], U8, APPLICATION_MSPACE);
+  44          #endif //TRACE_ENABLED
+  45          
+  46          
+  47                          /* ======================================= *
+  48                           *      L O C A L   F U N C T I O N S      *
+  49                           * ======================================= */
+  50          
+  51          /*!
+C51 COMPILER V7.20   P2P_DEMO_TX_NODE                                                      04/10/2014 16:48:40 PAGE 2   
+
+  52           * Entry point to the state machine.
+  53           */
+  54          void StateMachine_Init(void)
+  55          {
+  56   1          /* Disable Watchdog. */
+  57   1          DISABLE_WATCHDOG();
+  58   1          /* Init Demo State Machine. */
+  59   1          DEMO_SR = DEMO_BOOT;
+  60   1      }
+  61          
+  62          
+  63          /*!
+  64           * This is the State Machine of the Demo Application.
+  65           */
+  66          void StateMachine(void)
+  67          {
+  68   1              unsigned short timeout;
+  69   1          switch (DEMO_SR)
+  70   1          {
+  71   2              case DEMO_BOOT:
+  72   2                  /* Initialise board. */
+  73   2                  BoardInit();
+  74   2                  /* Enable global interrupts. */
+  75   2                  ENABLE_GLOBAL_INTERRUPTS();
+  76   2                  /* Initialise EZMacPRO. */
+  77   2                  EZMacPRO_Init();
+  78   2                  /* Wait until device goes to Sleep. */
+  79   2                  // while (!fEZMacPRO_StateSleepEntered);
+  80   2                      timeout = 50;
+  81   2                  while(!fEZMacPRO_StateSleepEntered){
+  82   3                      if(1 > timeout){
+  83   4                              ENABLE_WATCHDOG();
+  84   4                      }
+  85   3                                      else{
+  86   4                                              delay_ms(10);
+  87   4                                              timeout--;
+  88   4                                      }
+  89   3                  }
+  90   2      
+  91   2                  /* Clear State transition flags. */
+  92   2                  fEZMacPRO_StateWakeUpEntered = 0;
+  93   2                  fEZMacPRO_StateSleepEntered = 0;
+  94   2                  /* Point to point demo initialisation. */
+  95   2                  vP2P_demo_TxInit();
+  96   2      
+  97   2                              STATE_MAG_SW = 0;
+  98   2                              STATE_MAG_SW = 0;
+  99   2                              STATE_CHANGE_SOS = 0;
+ 100   2      
+ 101   2                  LED1 = ILLUMINATE;
+ 102   2                  
+ 103   2      #ifdef BOAD_VERSION_TELEWORKS    // teleworks
+ 104   2                              LED2 = EXTINGUISH;
+ 105   2                  LED_SOS = EXTINGUISH;
+ 106   2      #endif
+ 107   2                  /* Go to TX state. */
+ 108   2                  DEMO_SR = DEMO_TX;
+ 109   2                  break;
+ 110   2      
+ 111   2              case DEMO_TX:
+ 112   2                  /* LFT expired, send next packet. */
+ 113   2                  if (fEZMacPRO_LFTimerExpired)
+C51 COMPILER V7.20   P2P_DEMO_TX_NODE                                                      04/10/2014 16:48:40 PAGE 3   
+
+ 114   2                  {   /* Clear flag. */
+ 115   3                      fEZMacPRO_LFTimerExpired = 0;
+ 116   3      
+ 117   3      #ifdef BOAD_VERSION_TELEWORKS    // teleworks
+ 118   3                                      if( 0 == MAG_SENSOR) {  // no wear chin strap
+ 119   4                                              STATE_MAG_SW = 1;
+ 120   4                                              LED2 = ILLUMINATE;
+ 121   4                                      }
+ 122   3                                      else{
+ 123   4                                              STATE_MAG_SW = 0;
+ 124   4                                              LED2 = EXTINGUISH;
+ 125   4                                      }
+ 126   3      
+ 127   3                                      if(1 == SW_SOS) {
+ 128   4                                              STATE_CHANGE_SOS =1;
+ 129   4                                      }
+ 130   3      
+ 131   3                                      if(1 == STATE_CHANGE_SOS && 0 == STATE_SOS_SW && 0 == SW_SOS) {         // SOS KEY
+ 132   4                                              STATE_CHANGE_SOS = 0;
+ 133   4                                              STATE_SOS_SW = 1;
+ 134   4                                              LED_SOS = ILLUMINATE;
+ 135   4                                      }
+ 136   3                                      else if(1 == STATE_CHANGE_SOS && 1 == STATE_SOS_SW && 0 == SW_SOS) {    // SOS KEY
+ 137   4                                              STATE_CHANGE_SOS = 0;
+ 138   4                                              STATE_SOS_SW = 0;
+ 139   4                                              LED_SOS = EXTINGUISH;
+ 140   4                                      }
+ 141   3      #endif
+ 142   3                      /* Send packet then place the radio to sleep. */
+ 143   3                      vP2P_demo_SendPacketGoToSleep();
+ 144   3                                      LED1 = !LED1;
+ 145   3      
+ 146   3                      /* Go to TX wait for acknowledgement state. */
+ 147   3                      DEMO_SR = DEMO_TX_WF_ACK;
+ 148   3                  }
+ 149   2                  break;
+ 150   2      
+ 151   2              case DEMO_TX_WF_ACK:
+ 152   2                  /* Auto-acknowledgement has arrived. */
+ 153   2                  if (fEZMacPRO_PacketSent)
+ 154   2                  { /* Clear flag. */
+ 155   3                      fEZMacPRO_PacketSent = 0;
+ 156   3                     // LED1 = !LED1;
+ 157   3                      /* Go to TX state. */
+ 158   3                      DEMO_SR = DEMO_TX;
+ 159   3                  }
+ 160   2      
+ 161   2                  /* Auto-acknowledgement has not arrived. */
+ 162   2                  if (fEZMacPRO_AckTimeout)
+ 163   2                  { /* Clear flag. */
+ 164   3                      fEZMacPRO_AckTimeout = 0;
+ 165   3                      /* Go to TX state. */
+ 166   3                      DEMO_SR = DEMO_TX;
+ 167   3                  }
+ 168   2                  break;
+ 169   2      
+ 170   2              default:
+ 171   2                  break;
+ 172   2          }
+ 173   1      }
+ 174          
+ 175          
+C51 COMPILER V7.20   P2P_DEMO_TX_NODE                                                      04/10/2014 16:48:40 PAGE 4   
+
+ 176          
+ 177          void vP2P_demo_TxInit(void)
+ 178          {
+ 179   1              unsigned short timeout;
+ 180   1          /* Configure and start 2sec timeout for Silabs splash screen. */
+ 181   1          EZMacPRO_Reg_Write(LFTMR0, LFTMR0_TIMEOUT_SEC(STARTUP_TIMEOUT));
+ 182   1          EZMacPRO_Reg_Write(LFTMR1, LFTMR1_TIMEOUT_SEC(STARTUP_TIMEOUT));
+ 183   1          EZMacPRO_Reg_Write(LFTMR2, 0x80 | LFTMR2_TIMEOUT_SEC(STARTUP_TIMEOUT));
+ 184   1        #ifdef SDBC
+                  /* Show Silabs logo, demo name & version. */
+                  vPerformMenu(sMenu_StartupScreen);
+                #endif //SDBC
+ 188   1          /* Wait here until LFT expires. */
+ 189   1          //while(!fEZMacPRO_LFTimerExpired);
+ 190   1              timeout = 200;
+ 191   1              while(!fEZMacPRO_LFTimerExpired){
+ 192   2                if(1 > timeout){
+ 193   3                        ENABLE_WATCHDOG();
+ 194   3                }
+ 195   2                else{
+ 196   3                        delay_ms(10);
+ 197   3                        timeout--;
+ 198   3                }
+ 199   2              }
+ 200   1      
+ 201   1          /* Clear flag. */
+ 202   1          fEZMacPRO_LFTimerExpired = 0;
+ 203   1          /* Disable LFT. */
+ 204   1          EZMacPRO_Reg_Write(LFTMR2, ~0x80 & LFTMR2_TIMEOUT_SEC(STARTUP_TIMEOUT));
+ 205   1          /* Init counter. */
+ 206   1          wPacketCounter = 0;
+ 207   1          /* Init packet content. */
+ 208   1          // memcpy(&abRfPayload[0], "      ", 6);
+ 209   1          memset(&abRfPayload[0], 0x00, 64);
+ 210   1          EZMacPRO_Reg_Write(MCR, 0xAC);              // Set data rate to 9.6kbps, DNPL = 1, rad = 1, used 1 cha
+             -nnel
+ 211   1          EZMacPRO_Reg_Write(SECR, 0x20);             // State after receive is RX state and state after transmi
+             -t is Sleep state
+ 212   1          EZMacPRO_Reg_Write(TCR, 0xB8);              // LBT Before Talk enabled, Output power: +20 dBm, no ACK,
+             - AFC disable
+ 213   1          EZMacPRO_Reg_Write(LBTLR, 0x78);            // RSSI threshold -60 dB
+ 214   1          EZMacPRO_Reg_Write(LBTIR, 0x8A);            // Time interval
+ 215   1          EZMacPRO_Reg_Write(FR0, 1);                 // set the used frequency channel
+ 216   1          EZMacPRO_Reg_Write(SCID, CUSTOMER_ID);      // set the customer ID to 0x01
+ 217   1          EZMacPRO_Reg_Write(SFID, DEVICE_SELF_ID);   // set the self ID
+ 218   1          EZMacPRO_Reg_Write(LFTMR0, 0x00);           // Set the interval to 1s
+ 219   1          EZMacPRO_Reg_Write(LFTMR1, 0x02);           // Set the interval to 1s
+ 220   1          EZMacPRO_Reg_Write(LFTMR2, 0xC4);           // Enable LFT, use Internal Time Base
+ 221   1        #ifdef SDBC
+                  /* Show TX screen on LCD. */
+                  vPerformMenu(sMenu_TxScreen);
+                #endif //SDBC
+ 225   1        #ifdef TRACE_ENABLED
+ 226   1          printf("[TX_NODE][DEMO_BOOT] Startup done.\n");
+ 227   1          printf("[TX_NODE][DEMO_TX] Went to sleep.\n");
+ 228   1        #endif //TRACE_ENABLED
+ 229   1      }
+ 230          
+ 231          
+ 232          void vP2P_demo_SendPacketGoToSleep()
+ 233          {
+ 234   1              unsigned short timeout;
+C51 COMPILER V7.20   P2P_DEMO_TX_NODE                                                      04/10/2014 16:48:40 PAGE 5   
+
+ 235   1              //EZMacProPayloadStruct * PayloadStruct = &abRfPayload[0];
+ 236   1              EZMacProPayload_SensorNode * PayloadStruct = &abRfPayload[0];
+ 237   1          /* Set packet length. */
+ 238   1          // bPacketLength = 5;
+ 239   1          bPacketLength = sizeof(EZMacProPayload_SensorNode);
+ 240   1          /* Increase counter, set up packet content. */
+ 241   1          // sprintf(abRfPayload, "%1u", ++wPacketCounter);
+ 242   1          // PayloadStruct->SID = DEVICE_SELF_ID;
+ 243   1          // PayloadStruct->SEQUENSE_NO = ++wPacketCounter;
+ 244   1          
+ 245   1              PayloadStruct->STX[0]           = 0xBB;
+ 246   1              PayloadStruct->STX[1]           = 0xAA;
+ 247   1              PayloadStruct->sensor_sequence = ++wPacketCounter;
+ 248   1              PayloadStruct->sensor_ID[0]     = (U8)(DEVICE_SELF_ID);
+ 249   1              PayloadStruct->sensor_ID[1]     = 0x00;
+ 250   1              PayloadStruct->rf_dest[0]       = 0xFF;
+ 251   1              PayloadStruct->rf_dest[1]       = 0xFF;
+ 252   1              PayloadStruct->ETX[0]           = 0xCC;
+ 253   1              PayloadStruct->ETX[1]           = 0xDD;
+ 254   1              PayloadStruct->repeater_ID[0] = 0x00;
+ 255   1              PayloadStruct->repeater_ID[1] = 0x00;
+ 256   1              PayloadStruct->repeater_rssi = 0x00;
+ 257   1      
+ 258   1              if(1 == STATE_SOS_SW)
+ 259   1                      PayloadStruct->sos_state = 1;
+ 260   1              else
+ 261   1                      PayloadStruct->sos_state = 0;
+ 262   1                      
+ 263   1              if(1 == STATE_MAG_SW)
+ 264   1                      PayloadStruct->hel_state = 1;
+ 265   1              else
+ 266   1                      PayloadStruct->hel_state = 0;
+ 267   1      
+ 268   1              PayloadStruct->XOR = bitSet_XOR(sizeof (EZMacProPayload_SensorNode) -3 , (U8 *)PayloadStruct);
+ 269   1      
+ 270   1          /* Set Destination ID. */
+ 271   1          //EZMacPRO_Reg_Write(DID, 0x01);
+ 272   1          EZMacPRO_Reg_Write(DID, SERVER_ID);
+ 273   1          /* Write the packet length and payload to the TX buffer. */
+ 274   1          EZMacPRO_TxBuf_Write(bPacketLength, &abRfPayload[0]);
+ 275   1          //EZMacPRO_TxBuf_Write(sizeof(EZMacProPayloadStruct), &abRfPayload[0]);
+ 276   1          /* Wake up from Sleep mode. */
+ 277   1          EZMacPRO_Wake_Up();
+ 278   1          /* Wait until device goes to Idle. */
+ 279   1          // while (!fEZMacPRO_StateIdleEntered);
+ 280   1              timeout = 50;
+ 281   1              while(!fEZMacPRO_StateIdleEntered){
+ 282   2                if(1 > timeout){
+ 283   3                        ENABLE_WATCHDOG();
+ 284   3                }
+ 285   2                else{
+ 286   3                        delay_ms(10);
+ 287   3                        timeout--;
+ 288   3                }
+ 289   2              }
+ 290   1      
+ 291   1          /* Clear State transition flags. */
+ 292   1          fEZMacPRO_StateWakeUpEntered = 0;
+ 293   1          fEZMacPRO_StateIdleEntered = 0;
+ 294   1        #ifdef SDBC
+                  /* Display Transmit on LCD. */
+                  vPerformMenu(sMenu_PacketTransmit);
+C51 COMPILER V7.20   P2P_DEMO_TX_NODE                                                      04/10/2014 16:48:40 PAGE 6   
+
+                #endif //SDBC
+ 298   1        #ifdef TRACE_ENABLED
+ 299   1          printf("[TX_NODE][DEMO_SLEEP] Woke up.\n");
+ 300   1        #endif //TRACE_ENABLED
+ 301   1          /* Send the packet. */
+ 302   1          EZMacPRO_Transmit();
+ 303   1          /* Wait until device goes back to Sleep. */
+ 304   1          // while (!fEZMacPRO_StateSleepEntered);
+ 305   1              timeout = 50;
+ 306   1              while(!fEZMacPRO_StateSleepEntered){
+ 307   2                if(1 > timeout){
+ 308   3                        ENABLE_WATCHDOG();
+ 309   3                }
+ 310   2                else{
+ 311   3                        delay_ms(10);
+ 312   3                        timeout--;
+ 313   3                }
+ 314   2              }
+ 315   1              
+ 316   1          /* Clear State transition flag. */
+ 317   1          fEZMacPRO_StateSleepEntered = 0;
+ 318   1        #ifdef SDBC
+                  /* Update number of transmitted packets on LCD. */
+                  vPerformMenu(sMenu_TxRefreshCounter);
+                #endif //SDBC
+ 322   1        #ifdef TRACE_ENABLED
+ 323   1          printf("[TX_NODE][DEMO_TX] Transmitted packet. Packet content:%5u\n", wPacketCounter);
+ 324   1        #endif //TRACE_ENABLED
+ 325   1        #ifdef SDBC
+                  /* Display Sleep on LCD. */
+                  vPerformMenu(sMenu_SleepMode);
+                #endif //SDBC
+ 329   1        #ifdef TRACE_ENABLED
+ 330   1          printf("[TX_NODE][DEMO_SLEEP] Went to sleep.\n");
+ 331   1        #endif //TRACE_ENABLED
+ 332   1      }
+ 333          
+ 334          U8 bitSet_XOR(int len, U8 * buffer){
+ 335   1      
+ 336   1              U8 XOR=0;
+ 337   1              U16 i;
+ 338   1              for(i =0 ; i < len ; i++){
+ 339   2                      XOR ^= buffer[i];
+ 340   2              }
+ 341   1              return XOR;
+ 342   1      }
+ 343          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    809    ----
+   CONSTANT SIZE    =    200    ----
+   XDATA SIZE       =    110    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----      15
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  2 WARNING(S),  0 ERROR(S)

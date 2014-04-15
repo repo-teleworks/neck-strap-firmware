@@ -1,0 +1,1713 @@
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 1   
+
+
+C51 COMPILER V7.20, COMPILATION OF MODULE EZMACPRO_EXTERNALINT
+OBJECT MODULE PLACED IN EZMacPro_ExternalInt.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\c51.exe EZMacPro_ExternalInt.c DB OE BR DF(SI1000MB_SI1000,FREQUENCY_BAND_434,TRANS
+                    -CEIVER_OPERATION,FOUR_CHANNEL_IS_USED,EXTENDED_PACKET_FORMAT,TRACE_ENABLED) INCDIR(..\..\bsp;..\..\stack;c:\SiLabs\MCU_3
+                    -\Inc)
+
+line level    source
+
+   1          /*!\file EZMacPro_ExternalInt.c
+   2           * \brief External interrupt triggered state machine and functions.
+   3           *
+   4           * \n EZMacPRO version: 3.0.1r
+   5           *
+   6           * \n This software must be used in accordance with the End User License
+   7           * \n Agreement.
+   8           *
+   9           * \b COPYRIGHT
+  10           * \n Copyright 2012 Silicon Laboratories, Inc.
+  11           * \n http://www.silabs.com
+  12           */
+  13          
+  14          
+  15                          /* ======================================= *
+  16                           *              I N C L U D E              *
+  17                           * ======================================= */
+  18          
+  19          #include "stack.h"
+  20          
+  21          
+  22                          /* ======================================= *
+  23                           *     G L O B A L   V A R I A B L E S     *
+  24                           * ======================================= */
+  25          
+  26          U8 intStatus1;
+  27          U8 intStatus2;
+  28          
+  29          
+  30                          /* ======================================= *
+  31                           *      L O C A L   F U N C T I O N S      *
+  32                           * ======================================= */
+  33          
+  34          //------------------------------------------------------------------------------------------------
+  35          // Function Name
+  36          //    externalIntISR()
+  37          //
+  38          // Return Value : None
+  39          // Parameters   : None
+  40          //
+  41          // This is the Interrupt Service Routing for the External INT0 interrupt. The INT0 interrupt
+  42          // is connected to the IRQ output from the Si4432 radio. The INT0 interrupt is configured as
+  43          // active low level sensitive. So the Si4432 interrupt must be cleared before exiting the ISR.
+  44          //
+  45          //
+  46          // The Basic States (Wake-up, Receive, and Transmit) are implemented using if..else if bit
+  47          // tests for the corresponding bit in the master control register. The detailed TX and RX
+  48          // state machines are implemented in separate functions.
+  49          //
+  50          // Conditional compile time switches remove the TX or RX state machines for the RX only and
+  51          // and TX only builds.
+  52          //
+  53          // Most interrupt events should disable to the timer interrupt to cancel any pending
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 2   
+
+  54          // timeout events. If a interrupt event is to initiate a timeout event, the extIntTimeout()
+  55          // function should be used.
+  56          //
+  57          // The external interrupt should not call functions from other modules. This would create cause
+  58          // a multiple call to segment warning and result in poor RAM usage.
+  59          //
+  60          //-----------------------------------------------------------------------------------------------
+  61          INTERRUPT(externalIntISR, INTERRUPT_INT0)
+  62          {
+  63   1         U8 state;
+  64   1      
+  65   1         // clear MAC external interrupt (8051 INT0 interrupt)
+  66   1         // then always read both interrupt status registers to clear IQR pin
+  67   1         CLEAR_MAC_EXT_INTERRUPT();
+  68   1         intStatus1 = extIntSpiReadReg(SI4432_INTERRUPT_STATUS_1);
+  69   1         intStatus2 = extIntSpiReadReg(SI4432_INTERRUPT_STATUS_2);
+  70   1      
+  71   1      
+  72   1              if((intStatus1 != 0) || (intStatus2 & 0xF3 != 0))
+  73   1              {
+  74   2            state = EZMacProReg.name.MSR & 0x0F;
+  75   2      
+  76   2            if( EZMacProReg.name.MSR == EZMAC_PRO_WAKE_UP)
+  77   2            {//if the MAC is in Wake up state call the WakeUp function
+  78   3               extIntWakeUp(intStatus2);
+  79   3            }
+  80   2      #ifndef RECEIVER_ONLY_OPERATION
+  81   2            else if((EZMacProReg.name.MSR & TX_STATE_BIT) == TX_STATE_BIT)
+  82   2            {//if the MAC is in transmit state then call the transmit state machine
+  83   3               extIntTX_StateMachine(state, intStatus1, intStatus2);
+  84   3            }
+  85   2      #endif // RECEIVER_ONLY_OPERATION not defined
+  86   2      #ifndef TRANSMITTER_ONLY_OPERATION
+  87   2            else if((EZMacProReg.name.MSR & RX_STATE_BIT) == RX_STATE_BIT)
+  88   2            {//if the MAC is in receive state then call the receiver
+  89   3               extIntRX_StateMachine(state, intStatus1, intStatus2);
+  90   3            }
+  91   2      #endif // TRANSMITTER_ONLY_OPERATION not defined
+  92   2            else
+  93   2            {
+  94   3               extIntDisableInterrupts();
+  95   3            }
+  96   2              }
+  97   1      
+  98   1      //Low Frequency Timer
+  99   1         //if Wake up timer interrupt is occurred the proper callback function will be called
+ 100   1         if ((intStatus2 & 0x08) == 0x08)
+ 101   1         {
+ 102   2               EZMacPRO_LFTimerExpired();
+ 103   2               ENABLE_MAC_EXT_INTERRUPT();
+ 104   2         }
+ 105   1      
+ 106   1      
+ 107   1      //Low Battery Detect
+ 108   1         //if low battery detect interrupt is occurred the proper callback function will be called
+ 109   1         if ((intStatus2 & 0x04) == 0x04)
+ 110   1         {
+ 111   2                              EZMacPRO_LowBattery();
+ 112   2               ENABLE_MAC_EXT_INTERRUPT();
+ 113   2         }
+ 114   1      }
+ 115          //------------------------------------------------------------------------------------------------
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 3   
+
+ 116          // Function Name
+ 117          //    extIntWakeUp()
+ 118          //
+ 119          // Return Value : None
+ 120          // Parameters   : None
+ 121          //
+ 122          // The EZMAC_PRO_WAKE_UP state is used when starting the radio XTAL after sleep mode or when
+ 123          // resetting the radio using a SW Reset SPI command.
+ 124          //
+ 125          // If this function is called, an interrupt has occurred before the wake-up timeout. If the
+ 126          // interrupt source is the ichiprdy bit, the crystal has started successfully.
+ 127          //
+ 128          // When performing a SWRESET the interrupt enable will be reset to the default state.
+ 129          // This enables the POR interrupt. So it is possible to get a POR interrupt before the
+ 130          // chip ready interrupt. If this happens, a second attempt is made to start the crystal.
+ 131          //
+ 132          //-----------------------------------------------------------------------------------------------
+ 133          void extIntWakeUp(U8 intStatus2)
+ 134          {
+ 135   1              //if chip ready interrupt is occured
+ 136   1         if ((intStatus2 & SI4432_ICHIPRDY) == SI4432_ICHIPRDY)
+ 137   1         {
+ 138   2            // disable all interrupts
+ 139   2            extIntDisableInterrupts();
+ 140   2                      //go to Idle state
+ 141   2            EZMacProReg.name.MSR = EZMAC_PRO_IDLE;
+ 142   2            //Call the Idle state entered callback function.
+ 143   2            EZMacPRO_StateIdleEntered();
+ 144   2         }
+ 145   1              //if software reset interrupt is occurred
+ 146   1         else if ((intStatus2 & SI4432_IPOR) == SI4432_IPOR)
+ 147   1         {
+ 148   2            extIntSpiWriteReg(SI4432_INTERRUPT_ENABLE_1, 0x00);
+ 149   2            //enable chip ready interrupt
+ 150   2            extIntSetEnable2 (SI4432_ENCHIPRDY);
+ 151   2                      //enable the XTAL
+ 152   2            extIntSetFunction1(SI4432_XTON);
+ 153   2            // set time out 1 ms
+ 154   2            extIntTimeout (TIMEOUT_XTAL_START);
+ 155   2      
+ 156   2            ENABLE_MAC_INTERRUPTS();         // enable INT0  & T0 interrupt
+ 157   2         }
+ 158   1              else
+ 159   1         {
+ 160   2            // disable all interrupts
+ 161   2            extIntDisableInterrupts();
+ 162   2            EZMacProReg.name.MSR = WAKE_UP_ERROR;
+ 163   2            //call the error state entered callback function
+ 164   2            EZMacPRO_StateErrorEntered();
+ 165   2         }
+ 166   1      }
+ 167          //------------------------------------------------------------------------------------------------
+ 168          // Function Name
+ 169          //    extIntTX_StateMachine()
+ 170          //
+ 171          // Return Value : None
+ 172          // Parameters   : U8 state - TX state, least significant nibble of MSR
+ 173          //
+ 174          // This function implements the detailed TX state machine. The state machine is implemented
+ 175          // using switch...case... statements. For efficient compilation, the states are a series
+ 176          // of sequential continuous integers (no missing values). The states are enumerated in the
+ 177          // EZMacPro.h header file.
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 4   
+
+ 178          //
+ 179          // Conditional compile time switches remove the unused TX states if LBT of ACK is not supported.
+ 180          // These states are also removed from the enumeration at the begriming or end of the list.
+ 181          //
+ 182          // Conditional compile time switches remove this entire function for the Receiver only build.
+ 183          //
+ 184          //-----------------------------------------------------------------------------------------------
+ 185          #ifndef RECEIVER_ONLY_OPERATION
+ 186          void  extIntTX_StateMachine(U8 msr, U8 intStatus1, U8 intStatus2)
+ 187          {
+ 188   1      
+ 189   1      #ifdef EXTENDED_PACKET_FORMAT
+ 190   1      #ifndef TRANSMITTER_ONLY_OPERATION
+ 191   1          U8 temp8;
+ 192   1      #endif//TRANSMITTER_ONLY_OPERATION
+ 193   1      #endif// EXTENDED_PACKET_FORMAT
+ 194   1      
+ 195   1          switch (msr)
+ 196   1          {
+ 197   2      #ifdef TRANSCEIVER_OPERATION
+ 198   2              case TX_STATE_LBT_START_LISTEN:
+ 199   2              case TX_STATE_LBT_LISTEN:
+ 200   2              case TX_STATE_LBT_RANDOM_LISTEN:
+ 201   2                  // if RSSI interrupt is occured set the LBT flag
+ 202   2                  if((intStatus2 & SI4432_IRSSI) == SI4432_IRSSI)
+ 203   2                  {
+ 204   3                      BusyLBT = 1;
+ 205   3                  }
+ 206   2                  break;
+ 207   2      #endif //TRANSCEIVER_OPERATION
+ 208   2      
+ 209   2              case TX_STATE_WAIT_FOR_TX:
+ 210   2                  //if packet sent interrupt is occured
+ 211   2                  if((intStatus1 & SI4432_IPKSENT) == SI4432_IPKSENT)
+ 212   2                  {
+ 213   3      #ifdef FOUR_CHANNEL_IS_USED
+ 214   3                      //if Automatic Frequency Change feature is on then send the same packet on the four channe
+             -ls
+ 215   3                      if((EZMacProReg.name.TCR & 0x04)==0x04) // if AFCH==1 && ACKRQ = ignore
+ 216   3                      {
+ 217   4                          if(EZMacProCurrentChannel < (EZMacProReg.name.MCR & 0x03))
+ 218   4                          {
+ 219   5                              //select the next frequency channel
+ 220   5                              EZMacProCurrentChannel++;
+ 221   5                              extIntSpiWriteReg (SI4432_FREQUENCY_HOPPING_CHANNEL_SELECT,EZMacProReg.array[FR0+E
+             -ZMacProCurrentChannel]);
+ 222   5                              // enable TX
+ 223   5                              extIntSetFunction1(SI4432_TXON|SI4432_XTON);
+ 224   5                              // start timer with packet transmit timeout
+ 225   5                              extIntTimeout(TimeoutTX_Packet);
+ 226   5                              ENABLE_MAC_INTERRUPTS();
+ 227   5                              break;
+ 228   5                          }
+ 229   4                      }
+ 230   3      #endif //FOUR_CHANNEL_IS_USED
+ 231   3      #ifdef EXTENDED_PACKET_FORMAT
+ 232   3                      if((intStatus2 & SI4432_IWUT) != SI4432_IWUT)
+ 233   3                      {
+ 234   4      #ifndef TRANSMITTER_ONLY_OPERATION
+ 235   4                          if((EZMacProReg.name.TCR & 0x84)==0x80) //if ACKRQ = 1 && AFCH==0
+ 236   4                          {
+ 237   5      #ifndef B1_ONLY
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 5   
+
+                                      if(EZMacProReg.name.DTR == 0)//if rev V2 chip is used
+                                      //set the RX deviation (only rev V2)
+                                      extIntSpiWriteReg (SI4432_FREQUENCY_DEVIATION, RX_Freq_dev);
+              #endif//B1_ONLY
+ 242   5                              // disable PKSENT, enable PKVALID & CRCERROR
+ 243   5                              extIntSpiWriteReg (SI4432_INTERRUPT_ENABLE_1, SI4432_ENCRCERROR|SI4432_ENPKVALID);
+ 244   5                              // disable Enable2 interrupts
+ 245   5                              extIntSetEnable2(0x00);
+ 246   5                              // turn on RX, leave XTAL on
+ 247   5                              extIntSetFunction1(SI4432_RXON|SI4432_XTON);
+ 248   5                              // start timer with ACK timeout
+ 249   5                              extIntTimeout(TimeoutACK);
+ 250   5                              //go to next state
+ 251   5                              EZMacProReg.name.MSR = TX_STATE_BIT | TX_STATE_WAIT_FOR_ACK;
+ 252   5                              ENABLE_MAC_INTERRUPTS();
+ 253   5                              break;
+ 254   5                          }
+ 255   4      #endif//TRANSMITTER_ONLY_OPERATION
+ 256   4                      }
+ 257   3      #endif//EXTENDED_PACKET_FORMAT
+ 258   3                      // cancel timeout
+ 259   3                      DISABLE_MAC_TIMER_INTERRUPT();
+ 260   3                      // Next state after TX
+ 261   3                      // disable PKSENT
+ 262   3                      // call the packet sent callback function
+ 263   3                      EZMacPRO_PacketSent();
+ 264   3                      extIntSpiWriteReg (SI4432_INTERRUPT_ENABLE_1, 0x00);
+ 265   3                      //go to the next state
+ 266   3                      extIntGotoNextStateUsingSECR(1);
+ 267   3                  }
+ 268   2                  break;
+ 269   2      
+ 270   2      #ifdef EXTENDED_PACKET_FORMAT
+ 271   2      //#ifndef TRANSMITTER_ONLY_OPERATION
+ 272   2      #ifdef TRANSCEIVER_OPERATION
+ 273   2              case TX_STATE_WAIT_FOR_ACK:
+ 274   2                  //read out the destination ID
+ 275   2                  if (( EZMacProReg.name.MCR & 0x80 ) == 0x80)//if CID is used
+ 276   2                      temp8 = extIntSpiReadReg(SI4432_RECEIVED_HEADER_0);
+ 277   2                  else
+ 278   2                      temp8 = extIntSpiReadReg(SI4432_RECEIVED_HEADER_1);
+ 279   2      
+ 280   2                  //if packet received and the packet is sent to me
+ 281   2                  if((((intStatus1 & SI4432_IPKVALID)== SI4432_IPKVALID)) && (temp8 == EZMacProReg.name.SFID))
+ 282   2                  {
+ 283   3                      //read out the control byte
+ 284   3                      temp8 = extIntSpiReadReg(SI4432_RECEIVED_HEADER_3);
+ 285   3                      //if the packet is an acknowledgement
+ 286   3                      if ((temp8 & 0x08)==0x08)
+ 287   3                      {
+ 288   4                          // disable PKVALID & CRCERROR
+ 289   4                          extIntSpiWriteReg (SI4432_INTERRUPT_ENABLE_1, 0x00);
+ 290   4                          // cancel timeout
+ 291   4                          DISABLE_MAC_TIMER_INTERRUPT();
+ 292   4      
+ 293   4                          //if use dynamic payload length read out the received packet length and save to PLEN M
+             -AC register
+ 294   4                          if ((EZMacProReg.name.MCR & 0x04) == 0x04)
+ 295   4                          {
+ 296   5                              EZMacProReg.name.PLEN = extIntSpiReadReg(SI4432_RECEIVED_PACKET_LENGTH);
+ 297   5                          }
+ 298   4      
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 6   
+
+ 299   4                          //read out the received payload from the FIFO and save the RxBuffer
+ 300   4                          extIntSpiReadFIFO (EZMacProReg.name.PLEN, RxBuffer);
+ 301   4      
+ 302   4                          //call the packet sent callback function
+ 303   4                          EZMacPRO_PacketSent();
+ 304   4                          // go next state
+ 305   4                          extIntGotoNextStateUsingSECR(1);
+ 306   4                          break;
+ 307   4                      }
+ 308   3                      //if the packet is not an acknowledgement
+ 309   3                      else
+ 310   3                      {
+ 311   4                          // clear RX FIFO
+ 312   4                          temp8 = extIntSpiReadReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2);
+ 313   4                          temp8 |= SI4432_FFCLRRX;
+ 314   4                          extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+ 315   4                          temp8 &= ~SI4432_FFCLRRX;
+ 316   4                          extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+ 317   4                          // enable RX
+ 318   4                          extIntSetFunction1(SI4432_RXON|SI4432_XTON);
+ 319   4                          break;
+ 320   4                      }
+ 321   3                  }
+ 322   2                  //if received a packet with CRC error
+ 323   2                  else if ((intStatus1 & SI4432_ICRCERROR)== SI4432_ICRCERROR)
+ 324   2                  {
+ 325   3      #ifdef FOUR_CHANNEL_IS_USED
+ 326   3                          extIntIncrementError (EZMAC_PRO_ERROR_BAD_CRC);
+ 327   3      #endif //FOUR_CHANNEL_IS_USED
+ 328   3                      // go next state
+ 329   3                      extIntGotoNextStateUsingSECR(1);
+ 330   3                      break;
+ 331   3                  }
+ 332   2                  else
+ 333   2                  {
+ 334   3                      // clear RX FIFO
+ 335   3                      temp8 = extIntSpiReadReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2);
+ 336   3                      temp8 |= SI4432_FFCLRRX;
+ 337   3                      extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+ 338   3                      temp8 &= ~SI4432_FFCLRRX;
+ 339   3                      extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+ 340   3                      // enable RX
+ 341   3                      extIntSetFunction1(SI4432_RXON|SI4432_XTON);
+ 342   3                      break;
+ 343   3                  }
+ 344   2      //#endif//TRANSMITTER_ONLY_OPERATION
+ 345   2      #endif//TRANSCEIVER_OPERATION
+ 346   2      #endif//EXTENDED_PACKET_FORMAT
+ 347   2      
+ 348   2              case TX_ERROR_STATE:
+ 349   2                  DISABLE_MAC_INTERRUPTS();        // clear EX0 & ET0
+ 350   2                  // disable all Si443x interrupt sources
+ 351   2                  extIntSpiWriteReg(SI4432_INTERRUPT_ENABLE_1, 0x00);
+ 352   2                  extIntSetEnable2(0x00);
+ 353   2                  // clear interrupts
+ 354   2                  extIntSpiReadReg(SI4432_INTERRUPT_STATUS_1);
+ 355   2                  extIntSpiReadReg(SI4432_INTERRUPT_STATUS_2);
+ 356   2                  STOP_MAC_TIMER();                // stop Timer
+ 357   2                  CLEAR_MAC_TIMER_INTERRUPT();     // clear flag
+ 358   2                  CLEAR_MAC_EXT_INTERRUPT();
+ 359   2                  if(EZMacProReg.name.DTR == 0) //if the rev V2 chip is used
+ 360   2                      // this register setting is need for good current consumption in Idle mode (only rev V2)
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 7   
+
+ 361   2                      extIntSpiWriteReg (SI4432_CRYSTAL_OSCILLATOR_CONTROL_TEST, SI4432_BUFOVR);
+ 362   2                  break;
+ 363   2      
+ 364   2      #ifdef TRANSCEIVER_OPERATION
+ 365   2              case TX_ERROR_CHANNEL_BUSY:
+ 366   2                  break;
+ 367   2      #endif //TRANSCEIVER_OPERATION
+ 368   2         }
+ 369   1      }
+ 370          #endif // RECEIVER_ONLY_OPERATION not defined
+ 371          
+ 372          //------------------------------------------------------------------------------------------------
+ 373          // Function Name
+ 374          //    extIntRX_StateMachine()
+ 375          //
+ 376          // Return Value : None
+ 377          // Parameters   : U8 state - RX state, least significant nibble of MSR
+ 378          //
+ 379          // This function implements the detailed RX state machine. The state machine is implemented
+ 380          // using switch...case... statements. For efficient compilation, the states are a series
+ 381          // of sequential continuous integers (no missing values). The states are enumerated in the
+ 382          // EZMacPro.h header file.
+ 383          //
+ 384          // Conditional compile time switches remove the unused RX states if LBT, ACK, or packet
+ 385          // forwarding is not supported. These states are also removed from the enumeration at the
+ 386          // begriming or end of the list.
+ 387          //
+ 388          // Conditional compile time switches remove this entire function for the Transmitter only build.
+ 389          //
+ 390          //-----------------------------------------------------------------------------------------------
+ 391          #ifndef TRANSMITTER_ONLY_OPERATION
+ 392          void  extIntRX_StateMachine(U8 msr, U8 intStatus1, U8 intStatus2)
+ 393          {
+ 394   1          U8 temp8;
+ 395   1      
+ 396   1      #ifdef ANTENNA_DIVERSITY_ENABLED
+                      U8 rssi1,rssi2;
+              #endif//ANTENNA_DIVERSITY_ENABLED
+ 399   1          switch (msr)
+ 400   1          {
+ 401   2      #ifdef FOUR_CHANNEL_IS_USED
+ 402   2              case RX_STATE_FREQUENCY_SEARCH:
+ 403   2                          //if the preamble vaild interrupt is occured
+ 404   2                  if((intStatus2 & SI4432_IPREAVAL) == SI4432_IPREAVAL)
+ 405   2                  {
+ 406   3                      // enable SWDET interrupt
+ 407   3                      extIntSetEnable2(SI4432_ENSWDET);
+ 408   3                      // start timer with sync word timeout
+ 409   3                      extIntTimeout(TimeoutSyncWord);
+ 410   3                                      // go to the next state
+ 411   3                      EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_WAIT_FOR_SYNC;
+ 412   3                      ENABLE_MAC_INTERRUPTS();
+ 413   3                  }
+ 414   2                  break;
+ 415   2      #endif//FOUR_CHANNEL_IS_USED
+ 416   2      
+ 417   2      #ifdef MORE_CHANNEL_IS_USED
+                      case RX_STATE_FREQUENCY_SEARCH:
+                                  //if the preamble valid interrupt is occured
+                          if((intStatus2 & SI4432_IPREAVAL) == SI4432_IPREAVAL)
+                                      {
+                                          //Disable the receiver
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 8   
+
+                                  extIntSetFunction1(SI4432_XTON);
+                              //Enable the receiver
+                                  extIntSetFunction1(SI4432_XTON|SI4432_RXON);
+                                              // start timer with channel search timeout
+                                              extIntTimeout(TimeoutChannelSearch);
+                                          ENABLE_MAC_TIMER_INTERRUPT();
+                                              //go to the next state
+                                              EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_WAIT_FOR_PREAMBLE;
+                                      }
+                                      break;
+              
+                      case RX_STATE_WAIT_FOR_PREAMBLE:
+                          if((intStatus2 & SI4432_IPREAVAL) == SI4432_IPREAVAL)
+                          {
+                              // enable SWDET interrupt
+                              extIntSetEnable2(SI4432_ENSWDET);
+                              // start timer with sync word timeout
+                              extIntTimeout(TimeoutSyncWord);
+                              EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_WAIT_FOR_SYNC;
+                              ENABLE_MAC_INTERRUPTS();
+                              break;
+                          }
+                          break;
+              #endif //MORE_CHANNEL_IS_USED
+ 447   2      
+ 448   2              case RX_STATE_WAIT_FOR_SYNC:
+ 449   2                  //if sync word detect interrupt is occured
+ 450   2                  if((intStatus2 & SI4432_ISWDET) == SI4432_ISWDET)
+ 451   2                  {
+ 452   3                      DISABLE_MAC_TIMER_INTERRUPT();
+ 453   3                      // disable interrupt enable 2
+ 454   3                      extIntSetEnable2(0x00);
+ 455   3      #ifndef ANTENNA_DIVERSITY_ENABLED
+ 456   3                      //read out the RSSI value
+ 457   3                      EZMacProRSSIvalue = extIntSpiReadReg(SI4432_RECEIVED_SIGNAL_STRENGTH_INDICATOR);
+ 458   3      #endif//ANTENNA_DIVERSITY_ENABLED
+ 459   3      
+ 460   3      #ifdef ANTENNA_DIVERSITY_ENABLED
+                              //read out the RSSI values
+                                  rssi1 = extIntSpiReadReg(SI4432_ANTENNA_DIVERSITY_REGISTER_1);
+                                  rssi2 = extIntSpiReadReg(SI4432_ANTENNA_DIVERSITY_REGISTER_2);
+                              //determine the bigger
+                                  if (rssi1 > rssi2)
+                                  {
+                                  Selected_Antenna = 1;
+                                  EZMacProRSSIvalue = rssi1;
+                                      }
+                              else
+                              {
+                                  Selected_Antenna = 2;
+                                  EZMacProRSSIvalue = rssi2;
+                              }
+              #endif//ANTENNA_DIVERSITY_ENABLED
+ 476   3                      //call the syn word received callback function
+ 477   3                      EZMacPRO_SyncWordReceived();
+ 478   3                      //clear the receive status variable, because a new packet is coming
+ 479   3                      //and set the frequency channel ID
+ 480   3                      EZMacProReceiveStatus = 0x00;
+ 481   3      #ifdef FOUR_CHANNEL_IS_USED
+ 482   3                      //search disable
+ 483   3                      if ((EZMacProReg.name.RCR & 0x04) == 0x00)
+ 484   3                          EZMacProCurrentChannel = EZMacProReg.name.FSR & 0x03;
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 9   
+
+ 485   3                      //store the current freq. channel
+ 486   3                      EZMacProReg.name.RFSR = EZMacProCurrentChannel;
+ 487   3      #endif//FOUR_CHANNEL_IS_USED
+ 488   3      #ifdef MORE_CHANNEL_IS_USED
+                              //store the current freq. channel
+                              EZMacProReg.name.RFSR = SelectedChannel;
+              #endif//MORE_CHANNEL_IS_USED
+ 492   3      
+ 493   3                      //Enable SI4432_ENPKVALID and SI4432_ENCRCERROR interrupts
+ 494   3                      extIntSpiWriteReg(SI4432_INTERRUPT_ENABLE_1, SI4432_ENPKVALID|SI4432_ENCRCERROR);
+ 495   3                      // start timer with rx packet timeout
+ 496   3                      extIntTimeout(TimeoutRX_Packet);
+ 497   3                      ENABLE_MAC_INTERRUPTS();
+ 498   3                      //go to the next state
+ 499   3                      EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_WAIT_FOR_PACKET;
+ 500   3                  }
+ 501   2                  break;
+ 502   2      
+ 503   2              case RX_STATE_WAIT_FOR_PACKET:
+ 504   2                  //if valid packet receive
+ 505   2                  if((intStatus1 & SI4432_IPKVALID)== SI4432_IPKVALID)
+ 506   2                  {
+ 507   3                      //Disable All interrupts
+ 508   3                      extIntDisableInterrupts();
+ 509   3                      //Disable the receiver
+ 510   3                      extIntSetFunction1(SI4432_XTON);
+ 511   3      
+ 512   3                      //if use dynamic payload length read out the received packet length and save to PLEN MAC r
+             -egister
+ 513   3                      if ((EZMacProReg.name.MCR & 0x04) == 0x04)
+ 514   3                      {
+ 515   4                          EZMacProReg.name.PLEN = extIntSpiReadReg(SI4432_RECEIVED_PACKET_LENGTH);
+ 516   4                      }
+ 517   3                      //read out the headers
+ 518   3      #ifdef EXTENDED_PACKET_FORMAT
+ 519   3                      if (( EZMacProReg.name.MCR & 0x80 ) == 0x80)//if CID is used
+ 520   3                      {
+ 521   4                          EZMacProReg.name.RCTRL = extIntSpiReadReg(SI4432_RECEIVED_HEADER_3);
+ 522   4                          EZMacProReg.name.RCID = extIntSpiReadReg(SI4432_RECEIVED_HEADER_2);
+ 523   4                          EZMacProReg.name.RSID = extIntSpiReadReg(SI4432_RECEIVED_HEADER_1);
+ 524   4                          EZMacProReg.name.DID = extIntSpiReadReg(SI4432_RECEIVED_HEADER_0);
+ 525   4                      }
+ 526   3                      else
+ 527   3                      {
+ 528   4                          EZMacProReg.name.RCTRL = extIntSpiReadReg(SI4432_RECEIVED_HEADER_3);
+ 529   4                          EZMacProReg.name.RSID = extIntSpiReadReg(SI4432_RECEIVED_HEADER_2);
+ 530   4                          EZMacProReg.name.DID = extIntSpiReadReg(SI4432_RECEIVED_HEADER_1);
+ 531   4                      }
+ 532   3      #else // STANDARD_PACKET_FORMAT
+                              if (( EZMacProReg.name.MCR & 0x80 ) == 0x80)//if CID is used
+                              {
+                                  EZMacProReg.name.RCID = extIntSpiReadReg(SI4432_RECEIVED_HEADER_3);
+                                  EZMacProReg.name.RSID = extIntSpiReadReg(SI4432_RECEIVED_HEADER_2);
+                                  EZMacProReg.name.DID = extIntSpiReadReg(SI4432_RECEIVED_HEADER_1);
+                              }
+                              else
+                              {
+                                      EZMacProReg.name.RSID = extIntSpiReadReg(SI4432_RECEIVED_HEADER_3);
+                                  EZMacProReg.name.DID = extIntSpiReadReg(SI4432_RECEIVED_HEADER_2);
+                              }
+              #endif
+ 545   3                      //if received an ACK message and PF is disable then restart the receiving
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 10  
+
+ 546   3                      if(((EZMacProReg.name.RCTRL & 0x08) == 0x08) && ((EZMacProReg.name.RCR & 0x80) == 0x00))
+ 547   3                      {
+ 548   4                          // clear RX FIFO
+ 549   4                          temp8 = extIntSpiReadReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2);
+ 550   4                          temp8 |= SI4432_FFCLRRX;
+ 551   4                          extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+ 552   4                          temp8 &= ~SI4432_FFCLRRX;
+ 553   4                          extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+ 554   4      
+ 555   4      #ifdef FOUR_CHANNEL_IS_USED
+ 556   4                          extIntSetEnable2 (SI4432_ENPREAVAL);
+ 557   4                          if((EZMacProReg.name.RCR & 0x04) == 0x04)
+ 558   4                          {
+ 559   5                              //jump to the next channel
+ 560   5                              extIntNextRX_Channel();
+ 561   5                              // start timer with channel search timeout
+ 562   5                              extIntTimeout(TimeoutChannelSearch);
+ 563   5                              ENABLE_MAC_TIMER_INTERRUPT();
+ 564   5                          }
+ 565   4      #endif //FOUR_CHANNEL_IS_USED
+ 566   4      #ifdef MORE_CHANNEL_IS_USED
+                                  //enable the preamble valid interrupt
+                                  extIntSetEnable2(SI4432_ENPREAVAL);
+                                  //select the first freq. channel
+                                  SelectedChannel = 0;
+                                  extIntSpiWriteReg (SI4432_FREQUENCY_HOPPING_CHANNEL_SELECT,EZMacProReg.array[FR0+Selec
+             -tedChannel]);
+                                  // start timer with channel search timeout
+                                  extIntTimeout(TimeoutChannelSearch);
+                                  ENABLE_MAC_TIMER_INTERRUPT();
+              #endif//MORE_CHANNEL_IS_USED
+ 576   4      
+ 577   4                          //start receiver
+ 578   4                          extIntSetFunction1 (SI4432_RXON|SI4432_XTON);
+ 579   4                              //go to the next state
+ 580   4                          EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_FREQUENCY_SEARCH;
+ 581   4                          ENABLE_MAC_EXT_INTERRUPT();
+ 582   4                          break;
+ 583   4                      }
+ 584   3      
+ 585   3                      //read out the received payload from the FIFO and save to RxBuffer
+ 586   3                      extIntSpiReadFIFO (EZMacProReg.name.PLEN, RxBuffer);
+ 587   3      
+ 588   3                      /* If the packet is meant to me. */
+ 589   3                      if (!extIntHeaderError())
+ 590   3                      {
+ 591   4      #ifdef STANDARD_PACKET_FORMAT
+                                  //save the RSSI value to RSSI Mac register
+                                  EZMacProReg.name.RSSI = EZMacProRSSIvalue;
+                                  //save the receive status to the RSR Mac register
+                                  EZMacProReg.name.RSR = EZMacProReceiveStatus;
+                                  /* Call PacketReceived callback with RSSI value. */
+                                  EZMacPRO_PacketReceived(EZMacProRSSIvalue);
+                                  // all done use SECR to determine next state
+                                  extIntGotoNextStateUsingSECR(0);
+                                  break;
+              #endif //STANDARD_PACKET_FORMAT
+ 602   4      #ifdef EXTENDED_PACKET_FORMAT
+ 603   4      #ifndef RECEIVER_ONLY_OPERATION
+ 604   4                          // Is an ACK requested and the Sender ID isn't a broadcast address
+ 605   4                          if (((EZMacProReg.name.RCTRL & 0x04)  == 0x04) && ( EZMacProReg.name.RSID != 255))
+ 606   4                          {
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 11  
+
+ 607   5      #ifndef B1_ONLY
+                                      if(EZMacProReg.name.DTR == 0) //if rev V2 chip is used
+                                          //set the TX deviation(only V2)
+                                          extIntSpiWriteReg (SI4432_FREQUENCY_DEVIATION, TX_Freq_dev);
+              #endif//B1_ONLY
+ 612   5      
+ 613   5      #ifdef ANTENNA_DIVERSITY_ENABLED
+              #ifndef B1_ONLY
+                                      //if revision V2 or A0 chip is used
+                                      if ((EZMacProReg.name.DTR == 0x00) || (EZMacProReg.name.DTR == 0x01))
+                                      {
+                                          //switch OFF the internal algorithm
+                                          temp8 = extIntSpiReadReg(SI4432_OPERATING_AND_FUNCTION_CONTROL_2);
+                                          extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8 & 0x7F);
+              
+                                          //select the proper transmit antenna according to Selected_Antenna value
+                                          if ( Selected_Antenna == 1 )
+                                          {
+                                              //select antenna 1
+                                              extIntSpiWriteReg(SI4432_GPIO1_CONFIGURATION, 0x1D);
+                                              extIntSpiWriteReg(SI4432_GPIO2_CONFIGURATION, 0x1F);
+                                          }
+                                          else
+                                          {
+                                              //select antenna 2
+                                              extIntSpiWriteReg(SI4432_GPIO1_CONFIGURATION, 0x1F);
+                                              extIntSpiWriteReg(SI4432_GPIO2_CONFIGURATION, 0x1D);
+                                          }
+                                      }
+              #endif//B1_ONLY
+              #endif//ANTENNA_DIVERSITY_ENABLED
+ 638   5      
+ 639   5      
+ 640   5      #ifndef PACKET_FORWARDING_SUPPORTED
+ 641   5                              //set the ACK packet preamble to 4 byte if the packet forwarding not complied
+ 642   5                              PreamRegValue = extIntSpiReadReg(SI4432_PREAMBLE_LENGTH);
+ 643   5      #ifdef FOUR_CHANNEL_IS_USED
+ 644   5                              extIntSpiWriteReg(SI4432_PREAMBLE_LENGTH, 0x08);
+ 645   5      #endif//FOUR_CHANNEL_IS_USED
+ 646   5      #ifdef MORE_CHANNEL_IS_USED
+                                      temp8 = extIntSpiReadReg(SI4432_HEADER_CONTROL_2);
+                                      extIntSpiWriteReg(SI4432_HEADER_CONTROL_2, (temp8 & 0xFE));
+                                      extIntSpiWriteReg(SI4432_PREAMBLE_LENGTH, 0x08);
+              #endif//MORE_CHANNEL_IS_USED
+ 651   5      #endif//PACKET_FORWARDING_SUPPORTED
+ 652   5                              //set the ACK packet
+ 653   5                              // the transmit registers are volatile and need to be restored by the transmit fun
+             -ction
+ 654   5                              temp8 = (EZMacProReg.name.MCR >>3) & 0x03;
+ 655   5      
+ 656   5                              if (( EZMacProReg.name.MCR & 0x80 ) == 0x80)//if CID is used
+ 657   5                              {
+ 658   6                                  //set the control byte of the ACK packet( clear ACKREQ bit, set ACK bit)
+ 659   6                                  extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_3, ((EZMacProReg.name.RCTRL & ~0x04) 
+             -| 0x08 | temp8));
+ 660   6                                  // copy CID from RCID
+ 661   6                                  extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_2, EZMacProReg.name.RCID);
+ 662   6                                  // set Sender ID to Self ID
+ 663   6                                  extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_1, EZMacProReg.name.SFID);
+ 664   6                                  // set DID to the Received SID
+ 665   6                                  extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_0, EZMacProReg.name.RSID);
+ 666   6                              }
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 12  
+
+ 667   5                              else
+ 668   5                              {
+ 669   6                                  //set the control byte of the ACK packet( clear ACKREQ bit, set ACK bit)
+ 670   6                                  extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_3, ((EZMacProReg.name.RCTRL & ~0x04) 
+             -| 0x08 | temp8));
+ 671   6                                  // set Sender ID to Self ID
+ 672   6                                  extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_2, EZMacProReg.name.SFID);
+ 673   6                                  // set DID to the Received SID
+ 674   6                                  extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_1, EZMacProReg.name.RSID);
+ 675   6                              }
+ 676   5      
+ 677   5                              //clear TX FIFO
+ 678   5                              temp8 = extIntSpiReadReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2);
+ 679   5                              temp8 |= SI4432_FFCLRTX;
+ 680   5                              extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+ 681   5                              temp8 &= ~SI4432_FFCLRTX;
+ 682   5                              extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+ 683   5      
+ 684   5                              //if dynamic payload length mode is set
+ 685   5                              if ((EZMacProReg.name.MCR & 0x04) == 0x04)
+ 686   5                              {
+ 687   6                                  //set the payload length to default
+ 688   6                                  AckBufSize = ACK_PAYLOAD_DEFAULT_SIZE;
+ 689   6                                  extIntSpiWriteReg(SI4432_TRANSMIT_PACKET_LENGTH,AckBufSize);
+ 690   6      
+ 691   6                                  //clear AckBuffer
+ 692   6                                  for(temp8 = 0; temp8 < AckBufSize; temp8++)
+ 693   6                                      AckBuffer[temp8] = 0x00;
+ 694   6      
+ 695   6                                  //callback to customise Ack Packet payload
+ 696   6                                  EZMacPRO_AckSending();
+ 697   6      
+ 698   6                                  //Fill FIFO from AckBuffer
+ 699   6                                  for(temp8 = 0; temp8 < AckBufSize; temp8++)
+ 700   6                                      extIntSpiWriteReg(SI4432_FIFO_ACCESS,AckBuffer[temp8]);
+ 701   6                              }
+ 702   5                              else //if static payload length mode is set
+ 703   5                              {
+ 704   6                                  //set the fix payload length
+ 705   6                                  //AckBufSize = EZMacProReg.name.PLEN;
+ 706   6                                  //extIntSpiWriteReg(SI4432_TRANSMIT_PACKET_LENGTH,AckBufSize);
+ 707   6                                  extIntSpiWriteReg(SI4432_TRANSMIT_PACKET_LENGTH,EZMacProReg.name.PLEN);
+ 708   6      
+ 709   6                                  //if fix packet length is greater than ack buffer size
+ 710   6                                  if(EZMacProReg.name.PLEN > ACK_BUFFER_SIZE)
+ 711   6                                  {
+ 712   7                                      //Clear AckBuffer
+ 713   7                                      for(temp8=0; temp8 < ACK_BUFFER_SIZE; temp8++)
+ 714   7                                          AckBuffer[temp8] = 0x00;
+ 715   7      
+ 716   7                                      //Callback to customise Ack Packet payload
+ 717   7                                      EZMacPRO_AckSending();
+ 718   7      
+ 719   7                                      //Fill FIFO from AckBuffer
+ 720   7                                      for(temp8 = 0; temp8 < ACK_BUFFER_SIZE; temp8++)
+ 721   7                                          extIntSpiWriteReg(SI4432_FIFO_ACCESS,AckBuffer[temp8]);
+ 722   7                                      for(temp8 = ACK_BUFFER_SIZE; temp8 < EZMacProReg.name.PLEN; temp8++)
+ 723   7                                          extIntSpiWriteReg(SI4432_FIFO_ACCESS,0x00);
+ 724   7      
+ 725   7                                  }
+ 726   6                                  else//if fix packet length is smaller or equal than ack buffer size
+ 727   6                                  {
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 13  
+
+ 728   7                                      //Clear AckBuffer
+ 729   7                                      for(temp8=0;temp8 < EZMacProReg.name.PLEN;temp8++)
+ 730   7                                          AckBuffer[temp8] = 0x00;
+ 731   7      
+ 732   7                                      //Callback to customise Ack Packet payload
+ 733   7                                      EZMacPRO_AckSending();
+ 734   7      
+ 735   7                                      //Fill FIFO from AckBuffer
+ 736   7                                      for(temp8 = 0; temp8 < EZMacProReg.name.PLEN; temp8++)
+ 737   7                                          extIntSpiWriteReg(SI4432_FIFO_ACCESS,AckBuffer[temp8]);
+ 738   7                                  }
+ 739   6      
+ 740   6                              }
+ 741   5      
+ 742   5                              // enable ENPKSENT bit
+ 743   5                              extIntSpiWriteReg(SI4432_INTERRUPT_ENABLE_1, SI4432_ENPKSENT);
+ 744   5      
+ 745   5                              //start timer with transmit packet timeout
+ 746   5                              extIntTimeout(TimeoutTX_Packet);
+ 747   5                              ENABLE_MAC_INTERRUPTS();
+ 748   5                              //enable transmit
+ 749   5                              extIntSetFunction1(SI4432_TXON|SI4432_XTON);
+ 750   5                              //go to the next state
+ 751   5                              EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_WAIT_FOR_SEND_ACK;
+ 752   5                              break;
+ 753   5                          }
+ 754   4                          /* No ack requested, or the sender ID is the broadcast address. */
+ 755   4                          else
+ 756   4                          {
+ 757   5                              //save the RSSI value to RSSI Mac register
+ 758   5                              EZMacProReg.name.RSSI = EZMacProRSSIvalue;
+ 759   5                              //save the receive status to the RSR Mac register
+ 760   5                              EZMacProReg.name.RSR = EZMacProReceiveStatus;
+ 761   5                              /* Call PacketReceived callback with RSSI value. */
+ 762   5                              EZMacPRO_PacketReceived(EZMacProRSSIvalue);
+ 763   5                              // all done use SECR to determine next state
+ 764   5                              extIntGotoNextStateUsingSECR(0);
+ 765   5                              break;
+ 766   5                          }
+ 767   4      #endif//RECEIVER_ONLY_OPERATION
+ 768   4      #endif//EXTENDED_PACKET_FORMAT
+ 769   4                      }
+ 770   3      #ifdef PACKET_FORWARDING_SUPPORTED
+                              else // not for me
+                              {
+                                  // does it need forwarded?
+                                  if(extIntPacketNeedsForwarding())
+                                  {
+              #ifndef B1_ONLY
+                                      if(EZMacProReg.name.DTR == 0) //if rev V2 chip is used
+                                      //set the TX deviation (only rev V2)
+                                      extIntSpiWriteReg (SI4432_FREQUENCY_DEVIATION, TX_Freq_dev);
+              #endif//B1_ONLY
+              #ifdef ANTENNA_DIVERSITY_ENABLED
+              #ifndef B1_ONLY
+                                      //if revision V2 or A0 chip is used
+                                      if ((EZMacProReg.name.DTR == 0x00) || (EZMacProReg.name.DTR == 0x01))
+                                      {
+                                          //switch OFF the internal algorithm
+                                          temp8 = extIntSpiReadReg(SI4432_OPERATING_AND_FUNCTION_CONTROL_2);
+                                          extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8 & 0x7F);
+              
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 14  
+
+                                          //select the transmit antenna according to the Selected_Antenna value
+                                          if ( Selected_Antenna == 1 )
+                                          {
+                                              //select antenna 1
+                                              extIntSpiWriteReg(SI4432_GPIO1_CONFIGURATION, 0x1D);
+                                              extIntSpiWriteReg(SI4432_GPIO2_CONFIGURATION, 0x1F);
+                                          }
+                                          else
+                                          {
+                                              //select antenna 2
+                                              extIntSpiWriteReg(SI4432_GPIO1_CONFIGURATION, 0x1F);
+                                              extIntSpiWriteReg(SI4432_GPIO2_CONFIGURATION, 0x1D);
+                                          }
+                                      }
+              #endif//B1_ONLY
+              #endif//ANTENNA_DIVERSITY_ENABLED
+                                      // call the forward packet callback function
+                                      EZMacPRO_PacketForwarding();
+                                      // decrement radius
+                                      // already checked for non-zero radius
+                                      temp8 = EZMacProReg.name.RCTRL;
+                                      temp8--;
+                                      // write modified RX Header back to TX
+                                      // The transmit registers are volatile and need to be restored by transmit functio
+             -n
+                                      // Only Extended packet format supports forwarding
+                                      // Set the packet headers
+                                      if (( EZMacProReg.name.MCR & 0x80 ) == 0x80)//if CID is used
+                                      {
+                                          extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_0, EZMacProReg.name.DID);
+                                          extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_1, EZMacProReg.name.RSID);
+                                          extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_2, EZMacProReg.name.RCID);
+                                          extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_3, temp8);
+                                      }
+                                      else
+                                      {
+                                          extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_1, EZMacProReg.name.DID);
+                                          extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_2, EZMacProReg.name.RSID);
+                                          extIntSpiWriteReg(SI4432_TRANSMIT_HEADER_3, temp8);
+                                      }
+              
+                                      //write the transmit packet length back
+                                      extIntSpiWriteReg(SI4432_TRANSMIT_PACKET_LENGTH, EZMacProReg.name.PLEN);
+                                      // write RX packet back to FIFO
+                                      extIntSpiWriteFIFO (EZMacProReg.name.PLEN, RxBuffer);
+              
+                                      //save the RSSI value to RSSI Mac register
+                                      EZMacProReg.name.RSSI = EZMacProRSSIvalue;
+                                      //save the receive status to the RSR Mac register
+                                      EZMacProReg.name.RSR = EZMacProReceiveStatus;
+                                      /* Call PacketReceived callback with RSSI value. */
+                                      EZMacPRO_PacketReceived(EZMacProRSSIvalue);
+              
+                                      if((EZMacProReg.name.TCR & 0x08)==0x08)// LBT enabled
+                                      {
+                                          //Set Listen Before Talk Limit to RSSI threshold register
+                                          extIntSpiWriteReg(SI4432_RSSI_THRESHOLD, EZMacProReg.name.LBTLR);
+              
+                                          // disable all Si443x interrupt enable 1 sources
+                                          extIntSpiWriteReg(SI4432_INTERRUPT_ENABLE_1, 0x00);
+                                          // enable RSSI interrupt
+                                          extIntSetEnable2(SI4432_ENRSSI);
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 15  
+
+              
+                                          EZMacProLBT_Retrys = 0;
+                                          BusyLBT = 0;
+                                          //go to the next state
+                                          EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_FORWARDING_LBT_START_LISTEN;
+                                          //wait for the fix 0.5ms
+                                          //start timer with fix ETSI LBT timeout
+                                          extIntTimeout(TIMEOUT_LBTI_ETSI);
+              
+                                          //start receiver
+                                          extIntSetFunction1(SI4432_RXON|SI4432_XTON);
+                                          ENABLE_MAC_TIMER_INTERRUPT();
+                                          break;
+                                      }
+                                      else
+                                      {
+                                          // enable ENPKSENT bit
+                                          extIntSpiWriteReg(SI4432_INTERRUPT_ENABLE_1, SI4432_ENPKSENT);
+                                          // enable TX
+                                          extIntSetFunction1(SI4432_TXON|SI4432_XTON);
+                                          // start timer with transmit packet timeout
+                                          extIntTimeout(TimeoutTX_Packet);
+                                          // go to the next state
+                                          EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_FORWARDING_WAIT_FOR_TX;
+                                          ENABLE_MAC_TIMER_INTERRUPT();
+                                          break;
+                                      }
+                                  }
+                              }
+              #endif//PACKET_FORWARDING_SUPPORTED
+ 881   3      
+ 882   3      #ifdef FOUR_CHANNEL_IS_USED
+ 883   3                      //not for me, neither needs to be forwarded
+ 884   3                      extIntIncrementError(EZMAC_PRO_ERROR_BAD_ADDR);
+ 885   3      #endif//FOUR_CHANNEL_IS_USED
+ 886   3                      //save the receive status to the RSR Mac register
+ 887   3                      EZMacProReg.name.RSR = EZMacProReceiveStatus;
+ 888   3                      //call the packet discarded callback
+ 889   3                      EZMacPRO_PacketDiscarded();
+ 890   3                      // all done use SECR to determine next state
+ 891   3                      extIntGotoNextStateUsingSECR(0);
+ 892   3                      break;
+ 893   3                  } // end ipvalid
+ 894   2                  //if crc error occurred
+ 895   2                  else if((intStatus1 & SI4432_ICRCERROR)== SI4432_ICRCERROR)
+ 896   2                  {
+ 897   3      #ifdef FOUR_CHANNEL_IS_USED
+ 898   3                      extIntIncrementError(EZMAC_PRO_ERROR_BAD_CRC);
+ 899   3      #endif //FOUR_CHANNEL_IS_USED
+ 900   3                      EZMacProReg.name.RSR = EZMacProReceiveStatus;
+ 901   3                      EZMacPRO_CRCError();
+ 902   3      
+ 903   3                      // clear RX FIFO
+ 904   3                      temp8 = extIntSpiReadReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2);
+ 905   3                      temp8 |= SI4432_FFCLRRX;
+ 906   3                      extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+ 907   3                      temp8 &= ~SI4432_FFCLRRX;
+ 908   3                      extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+ 909   3      #ifdef FOUR_CHANNEL_IS_USED
+ 910   3                      // enable preamble detect interrupt
+ 911   3                      extIntSetEnable2 (SI4432_ENPREAVAL);
+ 912   3      
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 16  
+
+ 913   3                      if((EZMacProReg.name.RCR & 0x04) == 0x04)
+ 914   3                      {
+ 915   4                          //jump to the next channel
+ 916   4                          extIntNextRX_Channel();
+ 917   4                          //start timer with channel search timeout
+ 918   4                          extIntTimeout(TimeoutChannelSearch);
+ 919   4                          ENABLE_MAC_TIMER_INTERRUPT();
+ 920   4                      }
+ 921   3      #endif//FOUR_CHANNEL_IS_USED
+ 922   3      
+ 923   3      #ifdef MORE_CHANNEL_IS_USED
+                              //enable the preamble detect interrupt
+                              extIntSetEnable2(SI4432_ENPREAVAL);
+                              //select the nex channel
+                              SelectedChannel = 0;
+                              extIntSpiWriteReg (SI4432_FREQUENCY_HOPPING_CHANNEL_SELECT,EZMacProReg.array[FR0+SelectedC
+             -hannel]);
+                              // start timer with channel search timeout
+                              extIntTimeout(TimeoutChannelSearch);
+                              ENABLE_MAC_TIMER_INTERRUPT();
+              #endif//MORE_CHANNEL_IS_USED
+ 933   3                      //start receiver
+ 934   3                      extIntSetFunction1 (SI4432_RXON|SI4432_XTON);
+ 935   3                      //go to the next state
+ 936   3                      EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_FREQUENCY_SEARCH;
+ 937   3                      ENABLE_MAC_EXT_INTERRUPT();
+ 938   3                  }
+ 939   2                  break;
+ 940   2      
+ 941   2      #ifdef EXTENDED_PACKET_FORMAT
+ 942   2      #ifndef RECEIVER_ONLY_OPERATION
+ 943   2              case RX_STATE_WAIT_FOR_SEND_ACK:
+ 944   2                  //if packet sent interrupt is occured
+ 945   2                  if((intStatus1 & SI4432_IPKSENT) == SI4432_IPKSENT)
+ 946   2                  {
+ 947   3                      //Disable interrupts
+ 948   3                      extIntSpiWriteReg (SI4432_INTERRUPT_ENABLE_1, 0x00);
+ 949   3                      // cancel timeout
+ 950   3                      DISABLE_MAC_TIMER_INTERRUPT();
+ 951   3                      //save the RSSI value to RSSI Mac register
+ 952   3                      EZMacProReg.name.RSSI = EZMacProRSSIvalue;
+ 953   3                      //save the receive status to the RSR Mac register
+ 954   3                      EZMacProReg.name.RSR = EZMacProReceiveStatus;
+ 955   3                      //call Packet received call back function
+ 956   3                      EZMacPRO_PacketReceived(EZMacProRSSIvalue);
+ 957   3      #ifdef ANTENNA_DIVERSITY_ENABLED
+              #ifndef B1_ONLY
+                              //if revision V2 or A0 chip is used
+                              if ((EZMacProReg.name.DTR == 0x00) || (EZMacProReg.name.DTR == 0x01))
+                              {
+                                  //switch BACK the internal algorithm
+                                  temp8 = extIntSpiReadReg(SI4432_OPERATING_AND_FUNCTION_CONTROL_2);
+                                  extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8 | 0x80);
+                                  //the gpios control the rf chip automatically
+                                  extIntSpiWriteReg(SI4432_GPIO1_CONFIGURATION, 0x17);
+                                  extIntSpiWriteReg(SI4432_GPIO2_CONFIGURATION, 0x18);
+                              }
+              #endif//B1_ONLY
+              #endif//ANTENNA_DIVERSITY_ENABLED
+ 971   3      
+ 972   3      #ifndef PACKET_FORWARDING_SUPPORTED
+ 973   3                      //set BACK the preamble length
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 17  
+
+ 974   3      #ifdef FOUR_CHANNEL_IS_USED
+ 975   3                      extIntSpiWriteReg(SI4432_PREAMBLE_LENGTH, PreamRegValue);
+ 976   3      #endif//FOUR_CHANNEL_IS_USED
+ 977   3      #ifdef MORE_CHANNEL_IS_USED
+                              temp8 = extIntSpiReadReg(SI4432_HEADER_CONTROL_2);
+                              extIntSpiWriteReg(SI4432_HEADER_CONTROL_2, (temp8 | 0x01));
+                              extIntSpiWriteReg(SI4432_PREAMBLE_LENGTH, PreamRegValue);
+              #endif//MORE_CHANNEL_IS_USED
+ 982   3      #endif//PACKET_FORWARDING_SUPPORTED
+ 983   3                      // all done use SECR to determine next state
+ 984   3                      extIntGotoNextStateUsingSECR(0);
+ 985   3                      break;
+ 986   3                  }
+ 987   2      
+ 988   2                  if((intStatus2 & SI4432_IWUT) != SI4432_IWUT)
+ 989   2                  {
+ 990   3                      EZMacProReg.name.MSR = (RX_STATE_BIT | RX_ERROR_STATE);
+ 991   3                      //Call the Error state entered callback.
+ 992   3                      EZMacPRO_StateErrorEntered();
+ 993   3                  }
+ 994   2                  break;
+ 995   2      #endif// RECEIVER_ONLY_OPERATION
+ 996   2      #endif//EXTENDED_PACKET_FORMAT
+ 997   2      
+ 998   2      #ifdef PACKET_FORWARDING_SUPPORTED
+              #ifdef TRANSCEIVER_OPERATION
+                      case RX_STATE_FORWARDING_LBT_START_LISTEN:
+                      case RX_STATE_FORWARDING_LBT_LISTEN:
+                              case RX_STATE_FORWARDING_LBT_RANDOM_LISTEN:
+                          // if RSSI interrupt is occured set the LBT flag
+                          if((intStatus2 & SI4432_IRSSI) == SI4432_IRSSI)
+                          {
+                              BusyLBT = 1;
+                          }
+                          break;
+              
+              #endif // TRANSCEIVER_OPERATION
+                      case RX_STATE_FORWARDING_WAIT_FOR_TX:
+                          //if packet sent interrupt is occured
+                          if((intStatus1 & SI4432_IPKSENT) == SI4432_IPKSENT)
+                          {
+                              DISABLE_MAC_INTERRUPTS();
+              #ifdef FOUR_CHANNEL_IS_USED
+                              // disable 1 interrupts
+                              extIntSpiWriteReg(SI4432_INTERRUPT_ENABLE_1, 0x00);
+                              extIntSetEnable2(SI4432_ENPREAVAL);
+              #ifdef ANTENNA_DIVERSITY_ENABLED
+              #ifndef B1_ONLY
+                              //if revision V2 or A0 chip is used
+                              if ((EZMacProReg.name.DTR == 0x00) || (EZMacProReg.name.DTR == 0x01))
+                              {
+                                  //switch BACK the internal algorithm
+                                  temp8 = extIntSpiReadReg(SI4432_OPERATING_AND_FUNCTION_CONTROL_2);
+                                  extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8 | 0x80);
+                                  //the gpios control the rf chip automatically
+                                  extIntSpiWriteReg(SI4432_GPIO1_CONFIGURATION, 0x17);
+                                  extIntSpiWriteReg(SI4432_GPIO2_CONFIGURATION, 0x18);
+                              }
+              #endif//B1_ONLY
+              #endif//ANTENNA_DIVERSITY_ENABLED
+                              //if search is enabled
+                              if((EZMacProReg.name.RCR & 0x04) == 0x04)
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 18  
+
+                              {
+                                  //jump to the next channel
+                                  extIntNextRX_Channel();
+                                  // start timer with channel search timeout
+                                  extIntTimeout(TimeoutChannelSearch);
+                                  ENABLE_MAC_TIMER_INTERRUPT();
+                              }
+              #endif//FOUR_CHANNEL_IS_USED
+              #ifdef MORE_CHANNEL_IS_USED
+                              //enable the preamble valid interrupt
+                              extIntSetEnable2(SI4432_ENPREAVAL);
+                              //select the next channel
+                              SelectedChannel = 0;
+                              extIntSpiWriteReg (SI4432_FREQUENCY_HOPPING_CHANNEL_SELECT,EZMacProReg.array[FR0+SelectedC
+             -hannel]);
+                              // start timer with channel search timeout
+                              extIntTimeout(TimeoutChannelSearch);
+                              ENABLE_MAC_TIMER_INTERRUPT();
+              #endif//MORE_CHANNEL_IS_USED
+              
+                              //start receiver
+                              extIntSetFunction1(SI4432_RXON|SI4432_XTON);
+                              //go to the next state
+                              EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_FREQUENCY_SEARCH;
+                              ENABLE_MAC_EXT_INTERRUPT();
+                          }
+                          break;
+              #endif // PACKET_FORWARDING_SUPPORTED
+1063   2      
+1064   2              case RX_ERROR_STATE:
+1065   2                  DISABLE_MAC_INTERRUPTS();        // clear EX0 & ET0
+1066   2                  // disable all Si443x interrupt sources
+1067   2                  extIntSpiWriteReg(SI4432_INTERRUPT_ENABLE_1, 0x00);
+1068   2                  extIntSetEnable2(0x00);
+1069   2                  // clear interrupts
+1070   2                  extIntSpiReadReg(SI4432_INTERRUPT_STATUS_1);
+1071   2                  extIntSpiReadReg(SI4432_INTERRUPT_STATUS_2);
+1072   2                  STOP_MAC_TIMER();                // stop Timer
+1073   2                  CLEAR_MAC_TIMER_INTERRUPT();     // clear flag
+1074   2                  CLEAR_MAC_EXT_INTERRUPT();
+1075   2                  if(EZMacProReg.name.DTR == 0)//if rev V2 chip is used
+1076   2                  // this register setting is need for good current consumption in Idle mode (only rev V2)
+1077   2                  extIntSpiWriteReg (SI4432_CRYSTAL_OSCILLATOR_CONTROL_TEST, SI4432_BUFOVR);
+1078   2                  break;
+1079   2      
+1080   2              default:
+1081   2                  break;
+1082   2          }  // end switch
+1083   1      }
+1084          #endif // TRANSMITTER_ONLY_OPERATION
+1085          
+1086          //------------------------------------------------------------------------------------------------
+1087          // Function Name
+1088          //    extIntDisableInterrupts()
+1089          //
+1090          // Return Value : None
+1091          // Parameters   : None
+1092          //
+1093          // This function is used to disable all interrupts at the completion of a state. Using it saves
+1094          // a few bytes of code.
+1095          //-----------------------------------------------------------------------------------------------
+1096          void extIntDisableInterrupts (void)
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 19  
+
+1097          {
+1098   1         // disable timer since no subsequent timeout is used
+1099   1         DISABLE_MAC_TIMER_INTERRUPT();
+1100   1         // clear Interrupt Enable 1 register
+1101   1         extIntSpiWriteReg(SI4432_INTERRUPT_ENABLE_1, 0x00);
+1102   1         // clear Interrupt Enable 2 register
+1103   1         extIntSetEnable2 (0x00);
+1104   1      }
+1105          
+1106          //------------------------------------------------------------------------------------------------
+1107          // Function Name
+1108          //    extIntNextRX_Channel()
+1109          //
+1110          // Return Value : None
+1111          // Parameters   : None
+1112          //
+1113          // Notes:
+1114          //
+1115          // This function will advance to the next channel. The channel is incremented and then checked
+1116          // against the frequency mask in the MAC RCR register. Setting all mask bits is not permitted.
+1117          //
+1118          // This function is not included for the Transmitter only configuration.
+1119          //
+1120          //-----------------------------------------------------------------------------------------------
+1121          #ifndef TRANSMITTER_ONLY_OPERATION
+1122          void extIntNextRX_Channel (void)
+1123          {
+1124   1         U8  mask;
+1125   1         U8  n;
+1126   1      
+1127   1         n = EZMacProCurrentChannel;
+1128   1      
+1129   1         //initialize mask
+1130   1         mask = 0x08;
+1131   1         mask <<= n;
+1132   1      
+1133   1         do
+1134   1         {
+1135   2            n++;                             // increment n
+1136   2            n &= 0x03;                       // wrap modulo 4
+1137   2            mask <<=1 ;                      // shift mask left
+1138   2            if(mask == 0x80) mask = 0x08;    // wrap mask to bits 3-6
+1139   2      
+1140   2            // continue until unmasked bit is found
+1141   2         } while ((EZMacProReg.name.RCR & mask) == mask);
+1142   1      
+1143   1         extIntSpiWriteReg (SI4432_FREQUENCY_HOPPING_CHANNEL_SELECT,EZMacProReg.array[FR0+n]);
+1144   1         EZMacProCurrentChannel = n;
+1145   1      }
+1146          #endif // TRANSMITTER_ONLY_OPERATION not defined
+1147          //------------------------------------------------------------------------------------------------
+1148          // Function Name
+1149          //    extIntGotoNextStateUsingSECR()
+1150          //
+1151          // Return Value : None
+1152          // Parameters   : U8 tx - use SATX bits if non-zero
+1153          //
+1154          // Notes:
+1155          //
+1156          // This function is used to put the radio into a programmable state depending on the contents
+1157          // of the MAC SECR register. After transmit the SATX bits are used. After RX the SARX bits are
+1158          // used.
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 20  
+
+1159          //
+1160          // A U8 (unsigned char) is used for the boolean tx parameter instead of a bit, because a U8 is
+1161          // passed in a register.
+1162          //
+1163          //-----------------------------------------------------------------------------------------------
+1164          void extIntGotoNextStateUsingSECR( U8 tx)
+1165          {
+1166   1         U8 next;
+1167   1      
+1168   1      #ifndef TRANSMITTER_ONLY_OPERATION
+1169   1              U8 temp8;
+1170   1      #endif//TRANSMITTER_ONLY_OPERATION
+1171   1      
+1172   1         //Disable All interrupts
+1173   1         extIntDisableInterrupts();
+1174   1      #ifndef TRANSMITTER_ONLY_OPERATION
+1175   1      #ifndef B1_ONLY
+                      if(EZMacProReg.name.DTR == 0) //if rev V2 chip is used
+                      //set the RX deviation in all case (only rev V2)
+                         extIntSpiWriteReg (SI4432_FREQUENCY_DEVIATION, RX_Freq_dev);
+              #endif//B1_ONLY
+1180   1      #endif//TRANSMITTER_ONLY_OPERATON
+1181   1              //determine the next state
+1182   1         if (tx)
+1183   1         {    //the next state after transmit
+1184   2            next = EZMacProReg.name.SECR >> 6;
+1185   2         }
+1186   1         else
+1187   1         {    //the next state after receive
+1188   2            next =  (EZMacProReg.name.SECR >> 4) & 0x03;
+1189   2         }
+1190   1      
+1191   1         if(next == 0)
+1192   1         {  //go to sleep mode
+1193   2            // stop XTAL ( TX, RX, PLLON)
+1194   2            extIntSetFunction1 (0x00);
+1195   2            EZMacProReg.name.MSR = EZMAC_PRO_SLEEP;
+1196   2            //Call the Sleep state entered callback.
+1197   2            EZMacPRO_StateSleepEntered();
+1198   2         }
+1199   1      #ifndef TRANSMITTER_ONLY_OPERATION
+1200   1         else if(next == 2)
+1201   1         {  //go to RX mode
+1202   2      
+1203   2            // clear RX FIFO
+1204   2            temp8 = extIntSpiReadReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2);
+1205   2            temp8 |= SI4432_FFCLRRX;
+1206   2            extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+1207   2            temp8 &= ~SI4432_FFCLRRX;
+1208   2            extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8);
+1209   2      
+1210   2      #ifdef FOUR_CHANNEL_IS_USED
+1211   2            // enable preamble detect interrupt
+1212   2            extIntSetEnable2 (SI4432_ENPREAVAL);
+1213   2      
+1214   2            if((EZMacProReg.name.RCR & 0x04) == 0x04)
+1215   2            {
+1216   3               //jump to the next channel
+1217   3               extIntNextRX_Channel();
+1218   3               // start timer with channel search timeout
+1219   3               extIntTimeout(TimeoutChannelSearch);
+1220   3               ENABLE_MAC_TIMER_INTERRUPT();
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 21  
+
+1221   3            }
+1222   2      #endif//FOUR_CHANNEL_IS_USED
+1223   2      
+1224   2      #ifdef MORE_CHANNEL_IS_USED
+                    //enable the preamble detect interrupt
+                    extIntSetEnable2(SI4432_ENPREAVAL);
+                              //select the nex channel
+                              SelectedChannel = 0;
+                              extIntSpiWriteReg (SI4432_FREQUENCY_HOPPING_CHANNEL_SELECT,EZMacProReg.array[FR0+SelectedChannel]);
+                              // start timer with channel search timeout
+                              extIntTimeout(TimeoutChannelSearch);
+                    ENABLE_MAC_TIMER_INTERRUPT();
+              #endif//MORE_CHANNEL_IS_USED
+1234   2            //start receiver
+1235   2            extIntSetFunction1 (SI4432_RXON|SI4432_XTON);
+1236   2                      //go to the next state
+1237   2            EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_FREQUENCY_SEARCH;
+1238   2            ENABLE_MAC_EXT_INTERRUPT();
+1239   2         }
+1240   1      #endif // TRANSMITTER_ONLY_OPERATION
+1241   1         else //  default
+1242   1         {
+1243   2            // go to Idle mode
+1244   2            // disable RX & TX
+1245   2            extIntSetFunction1 (SI4432_XTON);
+1246   2      #ifndef B1_ONLY
+                              if(EZMacProReg.name.DTR == 0)//if rev V2 chip is used
+                            //this register setting is need for good current consumption in Idle mode (only rev V2)
+                         extIntSpiWriteReg (SI4432_CRYSTAL_OSCILLATOR_CONTROL_TEST, SI4432_BUFOVR);
+              #endif//B1_ONLY
+1251   2      #ifdef ANTENNA_DIVERSITY_ENABLED
+              #ifndef B1_ONLY
+                              //if revision V2 or A0 chip is used
+                              if ((EZMacProReg.name.DTR == 0x00) || (EZMacProReg.name.DTR == 0x01))
+                              {
+              
+                                      //switch BACK the internal algorithm
+                                      temp8 = extIntSpiReadReg(SI4432_OPERATING_AND_FUNCTION_CONTROL_2);
+                                      extIntSpiWriteReg (SI4432_OPERATING_AND_FUNCTION_CONTROL_2, temp8 | 0x80);
+                                      //the gpios control the rf chip automatically
+                                      extIntSpiWriteReg(SI4432_GPIO1_CONFIGURATION, 0x17);
+                                      extIntSpiWriteReg(SI4432_GPIO2_CONFIGURATION, 0x18);
+                              }
+              #endif//B1_ONLY
+              #endif//ANTENNA_DIVERSITY_ENABLED
+1266   2      
+1267   2            EZMacProReg.name.MSR = EZMAC_PRO_IDLE;
+1268   2            //Call the Idle state entered callback function.
+1269   2            EZMacPRO_StateIdleEntered();
+1270   2         }
+1271   1      }
+1272          
+1273          //------------------------------------------------------------------------------------------------
+1274          // Function Name
+1275          //    extIntIncrementError()
+1276          //
+1277          // Return Value : None
+1278          // Parameters   : U8 mask - SECR error mask
+1279          //
+1280          // Notes:
+1281          //
+1282          // This function will increment the appropriate error counter register if the error type is
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 22  
+
+1283          // enabled in the MAC SECR register. The error codes for the SECR register are defined in the
+1284          // EZMacPro.h header file. First the error code is compared to the error mask in the SECR
+1285          // register. The counting is enabled for the particular type of error, the error count is
+1286          // incremented. The error count corresponding to the current frequency is incremented.
+1287          //
+1288          // This function is not included for the Transmitter only configuration.
+1289          //
+1290          //------------------------------------------------------------------------------------------------
+1291          #ifdef FOUR_CHANNEL_IS_USED
+1292          #ifndef TRANSMITTER_ONLY_OPERATION
+1293          void extIntIncrementError (U8 m)
+1294          {
+1295   1         m &= 0x0F;                          // ignore upper nibble
+1296   1      
+1297   1         if((EZMacProReg.name.SECR & m) == m )
+1298   1         {
+1299   2            if(EZMacProReg.array[EC0+EZMacProCurrentChannel] < 255)
+1300   2               EZMacProReg.array[EC0+EZMacProCurrentChannel]++;
+1301   2         }
+1302   1      }
+1303          #endif // TRANSMITTER_ONLY_OPERATION not defined
+1304          #endif //FOUR_CHANNEL_IS_USED
+1305          //------------------------------------------------------------------------------------------------
+1306          // Function Name
+1307          //
+1308          // Return Value :
+1309          //    U8 status (U8 used for boolean)
+1310          //       1 packet needs forwarded
+1311          //       0 packet does not need forwarded
+1312          //
+1313          // Parameters   : None
+1314          //
+1315          // Notes:
+1316          //
+1317          // This function searches the packet forward table to determine if the same packet has
+1318          // already been forwarded. If the packet is found in the table, the function returns a 0
+1319          // and the packet is not forward. If the packet is not found in the table, the packet is
+1320          // added to the table and the function returns a 1 to forward the packet.
+1321          //
+1322          // A simple FIFO is used for the Forwarded packet table. This provides a basic packet
+1323          // forwarding function using a simple table. The FIFO size must be much smaller than the
+1324          // number of sequence numbers {16}.
+1325          //
+1326          // This function is only included if PACKET_FORWARDING_SUPPORTED is defined.
+1327          //
+1328          //------------------------------------------------------------------------------------------------
+1329          #ifdef PACKET_FORWARDING_SUPPORTED
+              U8 extIntPacketNeedsForwarding (void)
+              {
+              
+                 static U8 nextFree = 0;
+                 U8 i;
+                 U8 seq;
+              
+                 // first check the PFEN control bit
+                 if ((EZMacProReg.name.RCR & 0x80) == 0x80)
+                 {
+                    // then check radius
+                    if((EZMacProReg.name.RCTRL & 0x03) == 0)
+                       return 0;
+              
+                    seq = EZMacProReg.name.RCTRL >> 4;
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 23  
+
+              
+                    // search table for sid
+                    for (i = 0; i < FORWARDED_PACKET_TABLE_SIZE; i++)
+                    {
+                       if (ForwardedPacketTable[i].sid == EZMacProReg.name.RSID)
+                       {
+                          if(ForwardedPacketTable[i].seq == seq)
+                          {
+                             // received on same channel
+                             if(ForwardedPacketTable[i].chan == EZMacProCurrentChannel)
+                             {
+                                // identical entry already in table
+                                // do not forward
+                                return 0;
+                             }
+                          }
+                       }
+                    }
+              
+                    // entry not found in table
+                    // add to FIFO and forward
+                    ForwardedPacketTable[nextFree].sid = EZMacProReg.name.RSID;
+                    ForwardedPacketTable[nextFree].seq = seq;
+                    ForwardedPacketTable[nextFree].chan = EZMacProCurrentChannel;
+              
+                    if(nextFree < (FORWARDED_PACKET_TABLE_SIZE - 1))
+                       nextFree++;
+                    else
+                       nextFree = 0;
+              
+                    return 1;
+                 }
+                 else
+                 {
+                    return 0;
+                 }
+              }
+              #endif
+1383          //------------------------------------------------------------------------------------------------
+1384          // Function Name
+1385          //    extIntSetEnable2()
+1386          //
+1387          // Return Value : None
+1388          // Parameters   : U8 value
+1389          //
+1390          // Notes:
+1391          //
+1392          // This function is used instead of extIntSpiWriteReg() when writing to the
+1393          // SI4432_INTERRUPT_ENABLE_2 register. This function adds support for the low frequency timer
+1394          // and low battery detector, if the build options are defined. If not, the register is written
+1395          // directly.
+1396          //
+1397          //------------------------------------------------------------------------------------------------
+1398          void extIntSetEnable2(U8 value)
+1399          {
+1400   1      
+1401   1         if((EZMacProReg.name.LFTMR2 & 0x80)==0x80)
+1402   1         {
+1403   2            value |= SI4432_ENWUT;
+1404   2         }
+1405   1      
+1406   1         if((EZMacProReg.name.LBDR & 0x80)==0x80)
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 24  
+
+1407   1            value |= SI4432_ENLBDI;
+1408   1      
+1409   1         extIntSpiWriteReg(SI4432_INTERRUPT_ENABLE_2, value);
+1410   1      }
+1411          //------------------------------------------------------------------------------------------------
+1412          // Function Name
+1413          //    extIntSetFunction1()
+1414          //
+1415          // Return Value : None
+1416          // Parameters   : U8 value
+1417          //
+1418          // This function is used instead of extIntSpiWriteReg() when writing to the
+1419          // SI4432_OPERATING_AND_FUNCTION_CONTROL_1 register. This function adds support for the
+1420          // low frequency timer and low battery detector, if the build options are defined. If not,
+1421          // the register is written directly.
+1422          //
+1423          //------------------------------------------------------------------------------------------------
+1424          void extIntSetFunction1(U8 value)
+1425          {
+1426   1      
+1427   1         if((EZMacProReg.name.LFTMR2 & 0x80)==0x80)
+1428   1         {
+1429   2            value |= SI4432_ENWT;
+1430   2            ENABLE_MAC_EXT_INTERRUPT();
+1431   2         }
+1432   1         if((EZMacProReg.name.LFTMR2 & 0x40)==0x00)
+1433   1            value |= SI4432_X32KSEL;
+1434   1      
+1435   1         if((EZMacProReg.name.LBDR & 0x80)==0x80)
+1436   1            value |= SI4432_ENLBD;
+1437   1      
+1438   1         extIntSpiWriteReg(SI4432_OPERATING_AND_FUNCTION_CONTROL_1, value);
+1439   1      }
+1440          
+1441          //------------------------------------------------------------------------------------------------
+1442          // Function Name
+1443          //    extIntHeaderError()
+1444          //
+1445          // Return Value : U8 error - (1 error, 0 no error)
+1446          // Parameters   : None
+1447          //
+1448          // Notes:
+1449          //
+1450          // This function provides SW header filtering for the received packet after receiving the whole
+1451          // packet. The function will return a 1 (True) if there is a header error. So the function is
+1452          // named for the error.
+1453          //
+1454          // The filters and error counters are enabled separately. So the filters are checked in the
+1455          // order they are received and grouped according to the errors. This function calls the
+1456          // BadAddrError function to test the address filters and increments the bad address if
+1457          // there is an address error.
+1458          //
+1459          // Note that the Si4432 HW filters could be used only if the multi-cast filter is not used
+1460          // and there is no mechanism to distinguish between CID, DID, and SID header errors.
+1461          //
+1462          // This function is not included for the Transmitter only configuration.
+1463          //
+1464          //------------------------------------------------------------------------------------------------
+1465          #ifndef TRANSMITTER_ONLY_OPERATION
+1466          U8 extIntHeaderError(void)
+1467          {
+1468   1          U8 rcid;
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 25  
+
+1469   1          U8 packetLength;
+1470   1      
+1471   1          if (EZMacProReg.name.PFCR & 0x02) // PFEN=1 - promiscuous mode
+1472   1              return 0;
+1473   1      
+1474   1          if ((EZMacProReg.name.MCR & 0x80) == 0x80)//if CID is used
+1475   1          {
+1476   2              //if the Customer ID filter is enabled then CID will be checked
+1477   2              if ((EZMacProReg.name.PFCR & 0x80) == 0x80)
+1478   2              {
+1479   3      #ifdef EXTENDED_PACKET_FORMAT
+1480   3                  rcid = extIntSpiReadReg(SI4432_RECEIVED_HEADER_2);
+1481   3      #else  // STANDARD_PACKET_FORMAT
+                          rcid = extIntSpiReadReg(SI4432_RECEIVED_HEADER_3);
+              #endif//EXTENDED_PACKET_FORMAT
+1484   3                  if (rcid != EZMacProReg.name.SCID)
+1485   3                  {
+1486   4      #ifdef FOUR_CHANNEL_IS_USED
+1487   4                      //increment error counter
+1488   4                      extIntIncrementError(EZMAC_PRO_ERROR_BAD_CID);
+1489   4      #endif //FOUR_CHANNEL_IS_USED
+1490   4                      return 1;
+1491   4                  }
+1492   3              }
+1493   2          }
+1494   1      
+1495   1          if (extIntBadAddrError())
+1496   1          {
+1497   2      #ifdef FOUR_CHANNEL_IS_USED
+1498   2              //increment error counter
+1499   2              extIntIncrementError(EZMAC_PRO_ERROR_BAD_ADDR);
+1500   2      #endif //FOUR_CHANNEL_IS_USED
+1501   2              return 1;
+1502   2          }
+1503   1      
+1504   1          //if the Packet Length filter is enabled then Received Packet length will be checked
+1505   1          if ((EZMacProReg.name.PFCR & 0x04) == 0x04)
+1506   1          {
+1507   2              packetLength = extIntSpiReadReg(SI4432_RECEIVED_PACKET_LENGTH);
+1508   2      
+1509   2              if (packetLength > EZMacProReg.name.MPL)
+1510   2              {
+1511   3                  return 1;
+1512   3                  // no error count
+1513   3              }
+1514   2          }
+1515   1      
+1516   1          return 0;
+1517   1      }
+1518          #endif // TRANSMITTER_ONLY_OPERATION not defined
+1519          //------------------------------------------------------------------------------------------------
+1520          // Function Name
+1521          //    extIntBadAddrError()
+1522          //
+1523          // Return Value : U8 error - (1 error, 0 no error)
+1524          // Parameters   : None
+1525          //
+1526          // Notes:
+1527          //
+1528          // This function applies the address (SID & DID) filters and returns a 1 (True) if there is a
+1529          // address error.
+1530          //
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 26  
+
+1531          // Note that if packed forwarding is enabled the DID filter is not applied until after the
+1532          // packet is received and considered for forwarding, in the externalInt.c module.
+1533          //
+1534          // This function is not included for the Transmitter only configuration.
+1535          //
+1536          //------------------------------------------------------------------------------------------------
+1537          #ifndef TRANSMITTER_ONLY_OPERATION
+1538          U8 extIntBadAddrError(void)
+1539          {
+1540   1          U8 rsid;
+1541   1          U8 rdid;
+1542   1      
+1543   1          //if the Sender filter is enabled then SID will be checked
+1544   1          if ((EZMacProReg.name.PFCR & 0x40) == 0x40)
+1545   1          {
+1546   2      #ifdef EXTENDED_PACKET_FORMAT
+1547   2              if ((EZMacProReg.name.MCR & 0x80) == 0x80)//if CID is used
+1548   2                  rsid = extIntSpiReadReg(SI4432_RECEIVED_HEADER_1);
+1549   2              else
+1550   2                  rsid = extIntSpiReadReg(SI4432_RECEIVED_HEADER_2);
+1551   2      #else //STANDARD_PACKET_FORMAT
+                      if (( EZMacProReg.name.MCR & 0x80 ) == 0x80)//if CID is used
+                      rsid = extIntSpiReadReg(SI4432_RECEIVED_HEADER_2);
+                      else
+                      rsid = extIntSpiReadReg(SI4432_RECEIVED_HEADER_3);
+              #endif //EXTENDED_PACKET_FORMAT
+1557   2              if ((EZMacProReg.name.SFLT & EZMacProReg.name.SMSK) != (rsid & EZMacProReg.name.SMSK))
+1558   2              {
+1559   3                  return 1;
+1560   3              }
+1561   2          }
+1562   1      
+1563   1          //if the Destination filter is enabled then DID will be checked
+1564   1          if ((EZMacProReg.name.PFCR & 0x20) == 0x20)
+1565   1          {
+1566   2              //read DID from appropriate header byte
+1567   2      #ifdef EXTENDED_PACKET_FORMAT
+1568   2              if (( EZMacProReg.name.MCR & 0x80 ) == 0x80)//if CID is used
+1569   2              rdid = extIntSpiReadReg(SI4432_RECEIVED_HEADER_0);
+1570   2              else
+1571   2              rdid = extIntSpiReadReg(SI4432_RECEIVED_HEADER_1);
+1572   2      #else // STANDARD_PACKET_FORMAT
+                      if (( EZMacProReg.name.MCR & 0x80 ) == 0x80)//if CID is used
+                      rdid = extIntSpiReadReg(SI4432_RECEIVED_HEADER_1);
+                      else
+                      rdid = extIntSpiReadReg(SI4432_RECEIVED_HEADER_2);
+              #endif//EXTENEDED_PACKET_FORMAT
+1578   2              if (rdid == EZMacProReg.name.SFID)
+1579   2              {
+1580   3                  EZMacProReceiveStatus |= 0x80;
+1581   3                  return 0;
+1582   3              }
+1583   2      
+1584   2              //if the Broadcast filter is enabled then DID will be checked
+1585   2              if((EZMacProReg.name.PFCR & 0x08) == 0x08)
+1586   2              {
+1587   3                  if (rdid == 0xFF)
+1588   3                  {
+1589   4                      EZMacProReceiveStatus |= 0x20;
+1590   4                      return 0;
+1591   4                  }
+1592   3              }
+C51 COMPILER V7.20   EZMACPRO_EXTERNALINT                                                  04/10/2014 16:48:40 PAGE 27  
+
+1593   2      
+1594   2              //if the Multi-cast filter is enabled
+1595   2              if((EZMacProReg.name.PFCR & 0x10) == 0x10)
+1596   2              {
+1597   3                  // Multi-cast address mode
+1598   3                  if ((EZMacProReg.name.PFCR & 0x01) == 0x01)
+1599   3                  {
+1600   4                      if(rdid == EZMacProReg.name.MCA_MCM)
+1601   4                      {
+1602   5                          EZMacProReceiveStatus |= 0x40;
+1603   5                          return 0;
+1604   5                      }
+1605   4                  }
+1606   3                  else // multi-cast mask mode
+1607   3      
+1608   3                  {
+1609   4                      if ((rdid & EZMacProReg.name.MCA_MCM) == (EZMacProReg.name.SFID & EZMacProReg.name.MCA_MCM
+             -))
+1610   4                      {
+1611   5                          return 0;
+1612   5                      }
+1613   4                  }
+1614   3              }
+1615   2      
+1616   2              return 1; // none of above
+1617   2          }
+1618   1          else
+1619   1          {
+1620   2              return 0; // no DID Error - passes everything else
+1621   2          }
+1622   1      }
+1623          #endif // TRANSMITTER_ONLY_OPERATION not defined
+1624          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   2024    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      2      14
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

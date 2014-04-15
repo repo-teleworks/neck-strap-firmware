@@ -1,0 +1,227 @@
+C51 COMPILER V7.20   P2P_DEMO_FWD_NODE                                                     01/15/2014 19:23:23 PAGE 1   
+
+
+C51 COMPILER V7.20, COMPILATION OF MODULE P2P_DEMO_FWD_NODE
+OBJECT MODULE PLACED IN p2p_demo_fwd_node.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\c51.exe p2p_demo_fwd_node.c DB OE BR DF(SI1000MB_SI1000,FREQUENCY_BAND_434,TRANSCEI
+                    -VER_OPERATION,FOUR_CHANNEL_IS_USED,EXTENDED_PACKET_FORMAT,PACKET_FORWARDING_SUPPORTED,TRACE_ENABLED) INCDIR(..\..\bsp;..
+                    -\..\stack;c:\SiLabs\MCU_3\Inc)
+
+line level    source
+
+   1          /*!\file p2p_demo_fwd_node.c
+   2           * \brief P2P demo code on top of the EZMacPRO stack.
+   3           *
+   4           * \n P2P demo Forwarder node code description:
+   5           * \n After power on reset the Forwarder node goes into Receive state. When a
+   6           * \n packet that is not destined to the node is received, the stack
+   7           * \n automatically forwards (repeats) it.
+   8           * \n LED1 toggles when a packet is forwarded.
+   9           *
+  10           *
+  11           * \n This software must be used in accordance with the End User License
+  12           * \n Agreement.
+  13           *
+  14           * \b COPYRIGHT
+  15           * \n Copyright 2012 Silicon Laboratories, Inc.
+  16           * \n http://www.silabs.com
+  17           */
+  18          
+  19                          /* ======================================= *
+  20                           *              I N C L U D E              *
+  21                           * ======================================= */
+  22          
+  23          #include "..\..\common.h"
+  24          #include "p2p_demo_fwd_node.h"
+  25          #include "p2p_demo_fwd_menu.h"
+  26          
+  27          
+  28                          /* ======================================= *
+  29                           *     G L O B A L   V A R I A B L E S     *
+  30                           * ======================================= */
+  31          
+  32          SEGMENT_VARIABLE(abRfPayload[5], U8, BUFFER_MSPACE);
+  33          SEGMENT_VARIABLE(bPacketLength, U8, APPLICATION_MSPACE);
+  34          SEGMENT_VARIABLE(wPacketCounter, U16, APPLICATION_MSPACE);
+  35          SEGMENT_VARIABLE(DEMO_SR, U8, APPLICATION_MSPACE);
+  36          
+  37          #ifdef TRACE_ENABLED
+  38            SEGMENT_VARIABLE(printBuf[40], U8, APPLICATION_MSPACE);
+  39          #endif //TRACE_ENABLED
+  40          
+  41          
+  42                          /* ======================================= *
+  43                           *      L O C A L   F U N C T I O N S      *
+  44                           * ======================================= */
+  45          
+  46          /*!
+  47           * Entry point to the state machine.
+  48           */
+  49          void StateMachine_Init(void)
+  50          {
+  51   1          /* Disable Watchdog. */
+  52   1          DISABLE_WATCHDOG();
+  53   1          /* Init Demo State Machine. */
+C51 COMPILER V7.20   P2P_DEMO_FWD_NODE                                                     01/15/2014 19:23:23 PAGE 2   
+
+  54   1          DEMO_SR = DEMO_BOOT;
+  55   1      }
+  56          /*!
+  57           * This is the State Machine of the Demo Application.
+  58           */
+  59          void StateMachine(void)
+  60          {
+  61   1      
+  62   1          switch (DEMO_SR)
+  63   1          {
+  64   2              case DEMO_BOOT:
+  65   2                  /* Initialise board. */
+  66   2                  BoardInit();
+  67   2                  /* Enable global interrupts. */
+  68   2                  ENABLE_GLOBAL_INTERRUPTS();
+  69   2                  /* Initialise EZMacPRO. */
+  70   2                  EZMacPRO_Init();
+  71   2                  /* Wait until device goes to Sleep. */
+  72   2                  while (!fEZMacPRO_StateSleepEntered);
+  73   2                  /* Clear State transition flags. */
+  74   2                  fEZMacPRO_StateWakeUpEntered = 0;
+  75   2                  fEZMacPRO_StateSleepEntered = 0;
+  76   2                  /* Point to point demo initialisation. */
+  77   2                  vP2P_demo_FwdInit();
+  78   2                  /* Go to wait for first packet. */
+  79   2                  DEMO_SR = DEMO_FWD;
+  80   2                  break;
+  81   2      
+  82   2              case DEMO_FWD:
+  83   2                  /* Wait in Receive state until packet arrives. */
+  84   2                  if(fEZMacPRO_PacketForwarding)
+  85   2                  {   /* Clear flag. */
+  86   3                      fEZMacPRO_PacketForwarding = 0;
+  87   3                      /* Get packet then place the radio to sleep. */
+  88   3                      vP2P_demo_FwdPacket();
+  89   3                  }
+  90   2                  break;
+  91   2      
+  92   2              default:
+  93   2                  break;
+  94   2          }
+  95   1      }
+  96          
+  97          
+  98          
+  99          void vP2P_demo_FwdInit(void)
+ 100          {
+ 101   1          /* Configure and start 2sec timeout for Silabs splash screen. */
+ 102   1          EZMacPRO_Reg_Write(LFTMR0, LFTMR0_TIMEOUT_SEC(STARTUP_TIMEOUT));
+ 103   1          EZMacPRO_Reg_Write(LFTMR1, LFTMR1_TIMEOUT_SEC(STARTUP_TIMEOUT));
+ 104   1          EZMacPRO_Reg_Write(LFTMR2, 0x80 | LFTMR2_TIMEOUT_SEC(STARTUP_TIMEOUT));
+ 105   1        #ifdef SDBC
+                  /* Show Silabs logo, demo name & version. */
+                  vPerformMenu(sMenu_StartupScreen);
+                #endif //SDBC
+ 109   1          /* Wait here until LFT expires. */
+ 110   1          while(!fEZMacPRO_LFTimerExpired);
+ 111   1          /* Clear flag. */
+ 112   1          fEZMacPRO_LFTimerExpired = 0;
+ 113   1          /* Disable LFT. */
+ 114   1          EZMacPRO_Reg_Write(LFTMR2, ~0x80 & LFTMR2_TIMEOUT_SEC(STARTUP_TIMEOUT));
+ 115   1          /* Init counter. */
+C51 COMPILER V7.20   P2P_DEMO_FWD_NODE                                                     01/15/2014 19:23:23 PAGE 3   
+
+ 116   1          wPacketCounter = 0;
+ 117   1          /* Init packet content. */
+ 118   1          memcpy(&abRfPayload[0], "      ", 6);
+ 119   1        #ifdef SDBC
+                  /* Show FWD screen on LCD. */
+                  vPerformMenu(sMenu_FwdScreen);
+                #endif //SDBC
+ 123   1          EZMacPRO_Reg_Write(MCR, 0xAC);              // Set data rate to 9.6kbps, DNPL = 1, used 1 channel
+ 124   1          //EZMacPRO_Reg_Write(SECR, 0x60);             // State after receive is RX state and state after trans
+             -mit is Idle state
+ 125   1          EZMacPRO_Reg_Write(SECR, 0x20);             // State after receive is RX state and state after transmi
+             -t is Idle state
+ 126   1          EZMacPRO_Reg_Write(TCR, 0xB8);              // LBT Before Talk enabled, Output power: +20 dBm, no ACK,
+             - AFC disable
+ 127   1          EZMacPRO_Reg_Write(RCR, 0x80);              // Packet Forwarding enable
+ 128   1          EZMacPRO_Reg_Write(LBTLR, 0x78);            // RSSI threshold -60 dB
+ 129   1          EZMacPRO_Reg_Write(LBTIR, 0x8A);            // Time interval
+ 130   1          EZMacPRO_Reg_Write(PFCR, 0xA0);             // Use Customer ID filter and Destionation ID filter
+ 131   1          EZMacPRO_Reg_Write(FR0, 1);                 // set the used frequency channel
+ 132   1          EZMacPRO_Reg_Write(SCID, CUSTOMER_ID);      // set the customer ID to 0x01
+ 133   1          EZMacPRO_Reg_Write(SFID, DEVICE_SELF_ID);   // set the self ID
+ 134   1          LED1 = ILLUMINATE;
+ 135   1          
+ 136   1          /* Wake up from Sleep mode. */
+ 137   1          EZMacPRO_Wake_Up();
+ 138   1          /* Wait until device goes to Idle. */
+ 139   1          while (!fEZMacPRO_StateIdleEntered);
+ 140   1          /* Clear State transition flags. */
+ 141   1          fEZMacPRO_StateWakeUpEntered = 0;
+ 142   1          fEZMacPRO_StateIdleEntered = 0;
+ 143   1          /* Go to receive state. */
+ 144   1          EZMacPRO_Receive();
+ 145   1        #ifdef SDBC
+                  /* Display FWD screen on LCD. */
+                  vPerformMenu(sMenu_FwdScreen);
+                #endif //SDBC
+ 149   1        #ifdef TRACE_ENABLED
+ 150   1          printf("[FWD_NODE][DEMO_BOOT] Startup done.\n");
+ 151   1          printf("[FWD_NODE][DEMO_BOOT] Waiting for packet...\n");
+ 152   1        #endif //TRACE_ENABLED
+ 153   1          /* Wait until radio is placed to RX. */
+ 154   1          while (!fEZMacPRO_StateRxEntered);
+ 155   1          /* Clear State transition flag. */
+ 156   1          fEZMacPRO_StateRxEntered = 0;
+ 157   1      }
+ 158          
+ 159          
+ 160          void vP2P_demo_FwdPacket(void)
+ 161          {
+ 162   1          U16 wWaitCnt;
+ 163   1      
+ 164   1          /* Read out the payload. */
+ 165   1          EZMacPRO_RxBuf_Read(&bPacketLength, &abRfPayload[0]);
+ 166   1          /* Get the data. */
+ 167   1          wPacketCounter = atoi(abRfPayload);
+ 168   1        #ifdef SDBC
+                  /* Update number of forwarded packets on LCD. */
+                  vPerformMenu(sMenu_FwdRefreshCounter);
+                #endif //SDBC
+ 172   1        #ifdef TRACE_ENABLED
+ 173   1          printf("[FWD_NODE][DEMO_FWD] Packet received. Packet content:%5u\n", wPacketCounter);
+ 174   1        #endif //TRACE_ENABLED
+C51 COMPILER V7.20   P2P_DEMO_FWD_NODE                                                     01/15/2014 19:23:23 PAGE 4   
+
+ 175   1        #ifdef SDBC
+                  /* Display Forward on LCD. */
+                  vPerformMenu(sMenu_PacketForward);
+                #endif //SDBC
+ 179   1        #ifdef TRACE_ENABLED
+ 180   1          printf("[FWD_NODE][DEMO_FWD] Packet transmitted. Packet content:%5u\n", wPacketCounter);
+ 181   1        #endif //TRACE_ENABLED
+ 182   1          LED1 = !LED1;
+ 183   1          for (wWaitCnt = 0; wWaitCnt < 50000; wWaitCnt++);
+ 184   1        #ifdef SDBC
+                  /* Display Receive on LCD. */
+                  vPerformMenu(sMenu_PacketReceive);
+                #endif //SDBC
+ 188   1        #ifdef TRACE_ENABLED
+ 189   1          printf("[FWD_NODE][DEMO_FWD] Went to Receive.\n");
+ 190   1        #endif //TRACE_ENABLED
+ 191   1      }
+ 192          
+ 193          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    319    ----
+   CONSTANT SIZE    =    247    ----
+   XDATA SIZE       =     49    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
