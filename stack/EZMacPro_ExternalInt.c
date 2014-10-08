@@ -773,6 +773,8 @@ void  extIntRX_StateMachine(U8 msr, U8 intStatus1, U8 intStatus2)
                     // does it need forwarded?
                     if(extIntPacketNeedsForwarding())
                     {
+						//delay to avoid collision among several forward nodes.
+						delay_ms(20 * (EZMacProReg.name.SFID-1));
 #ifndef B1_ONLY
                         if(EZMacProReg.name.DTR == 0) //if rev V2 chip is used
                         //set the TX deviation (only rev V2)
@@ -829,6 +831,11 @@ void  extIntRX_StateMachine(U8 msr, U8 intStatus1, U8 intStatus2)
 
                         //write the transmit packet length back
                         extIntSpiWriteReg(SI4432_TRANSMIT_PACKET_LENGTH, EZMacProReg.name.PLEN);
+
+						// TELEWORKS dependent forward node...
+						RxBuffer[9]  = EZMacProReg.name.SFID;
+						RxBuffer[11] = EZMacProRSSIvalue;
+
                         // write RX packet back to FIFO
                         extIntSpiWriteFIFO (EZMacProReg.name.PLEN, RxBuffer);
 
@@ -855,7 +862,8 @@ void  extIntRX_StateMachine(U8 msr, U8 intStatus1, U8 intStatus2)
                             EZMacProReg.name.MSR = RX_STATE_BIT | RX_STATE_FORWARDING_LBT_START_LISTEN;
                             //wait for the fix 0.5ms
                             //start timer with fix ETSI LBT timeout
-                            extIntTimeout(TIMEOUT_LBTI_ETSI);
+							extIntTimeout(TIMEOUT_LBTI_ETSI);
+                            //extIntTimeout(TIMEOUT_LBTI_ETSI + EZMacProReg.name.SFID * TIMEOUT_US(10000));
 
                             //start receiver
                             extIntSetFunction1(SI4432_RXON|SI4432_XTON);

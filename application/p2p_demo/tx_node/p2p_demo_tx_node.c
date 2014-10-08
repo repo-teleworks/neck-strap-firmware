@@ -215,8 +215,8 @@ void vP2P_demo_TxInit(void)
     EZMacPRO_Reg_Write(FR0, 1);                 // set the used frequency channel
     EZMacPRO_Reg_Write(SCID, CUSTOMER_ID);      // set the customer ID to 0x01
     EZMacPRO_Reg_Write(SFID, DEVICE_SELF_ID);   // set the self ID
-    EZMacPRO_Reg_Write(LFTMR0, 0x00);           // Set the interval to 1s
-    EZMacPRO_Reg_Write(LFTMR1, 0x02);           // Set the interval to 1s
+    EZMacPRO_Reg_Write(LFTMR0, 0x00);           // Set the interval to 5s
+    EZMacPRO_Reg_Write(LFTMR1, 0x0A);           // Set the interval to 5s
     EZMacPRO_Reg_Write(LFTMR2, 0xC4);           // Enable LFT, use Internal Time Base
   #ifdef SDBC
     /* Show TX screen on LCD. */

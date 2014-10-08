@@ -84,7 +84,7 @@ void StateMachine(void)
             {   /* Clear flag. */
                 fEZMacPRO_PacketForwarding = 0;
                 /* Get packet then place the radio to sleep. */
-                vP2P_demo_FwdPacket();
+                //vP2P_demo_FwdPacket();
             }
             break;
 
