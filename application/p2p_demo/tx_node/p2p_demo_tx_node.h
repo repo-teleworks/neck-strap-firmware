@@ -28,7 +28,7 @@
  * Addresses used in this demo.
  */
 #define CUSTOMER_ID                         (0x01)
-#define DEVICE_SELF_ID	                    (0x05)
+#define DEVICE_SELF_ID	                    (0x06)
 #define SERVER_ID							(0x01)
 
 
@@ -40,7 +40,7 @@
 #define DEMO_TX_WF_ACK                      (0x40)
 
 
-#define STARTUP_TIMEOUT                     (3)         // sec
+#define STARTUP_TIMEOUT                     (0)         // sec
 
 
 /*!
